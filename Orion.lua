@@ -1,4 +1,4 @@
---// ORION - Blox Fruits
+--// ORION HUB v4.0 - Blox Fruits
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Players = game:GetService("Players")
@@ -12,29 +12,43 @@ local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local StarterGui = game:GetService("StarterGui")
 local GuiService = game:GetService("GuiService")
+local Lighting = game:GetService("Lighting")
 local lp = Players.LocalPlayer
 local VIM = nil
 pcall(function() VIM = game:GetService("VirtualInputManager") end)
 
-local NAME = "ORION"
-local VERSION = "v3.0"
+local NAME = "Orion Hub"
+local VERSION = "v4.0"
+local BUTTON_IMAGE = "" -- opcional: "rbxassetid://ID" ou link direto (.png) para o botao redondo
 local CFG_FILE = "OrionHub_config.json"
 
 --==================== CONFIG (salva em arquivo) ====================
 local Config = {
-    -- farm
-    tweenSpeed = 250, height = 12, weapon = "Melee", fast = true, bring = true, haki = true,
-    faceMob = false, noclip = true, chestSpeed = 250, fruitSpeed = 250, tpSpeed = 300,
-    store = true, hopDelay = 6, seaHeight = 35, seaSpeed = 250, seaSkills = true,
-    bossHeight = 14, bossSkills = true, aimCam = false,
-    -- toggles
+    -- farm / combate
+    tweenSpeed = 250, tweenMode = "Lerp", farmDist = 10, bringRadius = 200, bringCount = 10, posMethod = "Above",
+    weapon = "Melee", fast = true, bring = true, haki = true, faceMob = false, noclip = true,
+    atkMethod = "Auto", atkDelay = 0.04, moonRange = 60, moonTargets = 12,
+    chestSpeed = 250, fruitSpeed = 250, tpSpeed = 300, store = true, hopDelay = 6,
+    seaHeight = 35, seaSpeed = 250, seaSkills = true, bossHeight = 14, bossSkills = true, aimCam = false,
+    -- main
     farm = false, chest = false, bones = false, cake = false, cakeQuest = false, ignoreKat = false,
+    -- multi farm
     elite = false, killIndra = false, sumIndra = false, pads = false,
     killReaper = false, sumReaper = false, killBeard = false, sumBeard = false, hopBeard = false,
+    -- sea events
     sLev = false, sLevSeg = false, sBeast = false, sShark = false, sPiranha = false, sFish = false, sGhost = false,
+    -- fruits
     fruit = false, hop = false,
-    espPlayers = false, espFruits = false, espChests = false, espDist = true, espOutline = true,
-    spdOn = false, speedVal = 50, cfm = false, infj = false,
+    -- quests / race / raids / trials
+    bartilo = false, citizen = false, raceV2 = false, raceV3 = false,
+    raid = false, raidType = "Flame", buyChip = false, badFruit = true, awaken = false,
+    actV3 = false, actV4 = false,
+    -- extras
+    afk = true, afkMin = 5, fpsBoost = false, fpsMax = false,
+    espPlayers = false, espFruits = false, espChests = false, espBerries = false, espIsland = false,
+    espDist = true, espOutline = true,
+    spdOn = false, speedVal = 50, cfm = false, infj = false, walkWater = false,
+    island = "",
 }
 pcall(function()
     if isfile and isfile(CFG_FILE) then
@@ -44,9 +58,15 @@ pcall(function()
         end
     end
 end)
+local saveQueued = false
 local function saveCfg()
-    pcall(function()
-        if writefile then writefile(CFG_FILE, HttpService:JSONEncode(Config)) end
+    if saveQueued then return end
+    saveQueued = true
+    task.delay(0.6, function()
+        saveQueued = false
+        pcall(function()
+            if writefile then writefile(CFG_FILE, HttpService:JSONEncode(Config)) end
+        end)
     end)
 end
 
@@ -77,12 +97,10 @@ end)
 if not okp or not gui.Parent then gui.Parent = lp:WaitForChild("PlayerGui") end
 
 local C = {
-    bg = Color3.fromRGB(12, 13, 19), side = Color3.fromRGB(17, 18, 26), card = Color3.fromRGB(26, 27, 38),
-    line = Color3.fromRGB(42, 44, 60), txt = Color3.fromRGB(236, 237, 246), mut = Color3.fromRGB(128, 131, 154),
-    off = Color3.fromRGB(52, 54, 72), acc = Color3.fromRGB(99, 102, 241),
+    bg = Color3.fromRGB(11, 11, 17), side = Color3.fromRGB(15, 15, 23), card = Color3.fromRGB(23, 23, 34),
+    line = Color3.fromRGB(40, 40, 58), txt = Color3.fromRGB(236, 236, 246), mut = Color3.fromRGB(126, 128, 152),
+    off = Color3.fromRGB(50, 52, 70), acc = Color3.fromRGB(139, 92, 246), acc2 = Color3.fromRGB(99, 102, 241),
 }
-C.panel = C.card
-C.sel = C.acc
 
 local function new(cls, props, par)
     local i = Instance.new(cls)
@@ -98,14 +116,15 @@ local function isMove(i)
     return i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch
 end
 
-local active = {}
-local gens = {}
+local Stopped = false
+local Running = false -- true enquanto o agendador executa alguma funcao automatica
+local TpBusy = false
 local conns = {}
 local function keep(c) table.insert(conns, c) return c end
 local function destroyAll()
-    for k in pairs(gens) do gens[k] = gens[k] + 1 end
-    for k in pairs(active) do active[k] = false end
+    Stopped = true
     for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    pcall(function() RS:UnbindFromRenderStep("ORIONAim") end)
     pcall(function() gui:Destroy() end)
 end
 pcall(function() if getgenv then getgenv().ORION_UNLOAD = destroyAll end end)
@@ -113,40 +132,50 @@ pcall(function() if getgenv then getgenv().ORION_UNLOAD = destroyAll end end)
 --==================== JANELA ====================
 local cam0 = workspace.CurrentCamera
 local vp = cam0 and cam0.ViewportSize or Vector2.new(1280, 720)
-local W = math.min(580, vp.X - 20)
-local H = math.min(400, vp.Y - 20)
+local W = math.min(660, vp.X - 20)
+local H = math.min(440, vp.Y - 20)
 
 local main = new("Frame", {
     Size = UDim2.fromOffset(W, H), Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2),
     BackgroundColor3 = C.bg, BorderSizePixel = 0,
 }, gui)
-round(main, 12)
-new("UIStroke", {Thickness = 1, Color = C.line}, main)
+round(main, 14)
+new("UIStroke", {Thickness = 1.5, Color = C.acc, Transparency = 0.45}, main)
 
-local top = new("Frame", {Size = UDim2.new(1, 0, 0, 46), BackgroundTransparency = 1}, main)
-new("TextLabel", {
-    Size = UDim2.fromOffset(220, 46), Position = UDim2.fromOffset(16, 0), BackgroundTransparency = 1,
-    Text = NAME .. '  <font color="rgb(128,131,154)" size="12">' .. VERSION .. "</font>", RichText = true,
-    TextColor3 = C.txt, Font = Enum.Font.GothamBold, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left,
+local top = new("Frame", {Size = UDim2.new(1, 0, 0, 54), BackgroundTransparency = 1}, main)
+local titleLbl = new("TextLabel", {
+    Size = UDim2.fromOffset(250, 24), Position = UDim2.fromOffset(16, 8), BackgroundTransparency = 1,
+    Text = NAME .. '  <font color="rgb(139,92,246)">NEXT</font>', RichText = true,
+    TextColor3 = C.txt, Font = Enum.Font.GothamBold, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left,
 }, top)
 local infoTop = new("TextLabel", {
-    Size = UDim2.fromOffset(170, 46), Position = UDim2.new(1, -250, 0, 0), BackgroundTransparency = 1,
-    Text = "Blox Fruits", TextColor3 = C.mut, Font = Enum.Font.GothamMedium, TextSize = 12,
-    TextXAlignment = Enum.TextXAlignment.Right,
+    Size = UDim2.fromOffset(300, 16), Position = UDim2.fromOffset(16, 31), BackgroundTransparency = 1,
+    Text = "Blox Fruit · " .. VERSION, TextColor3 = C.mut, Font = Enum.Font.Gotham, TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left,
 }, top)
-local function topBtn(txt, xOff)
+
+local searchBox = new("TextBox", {
+    Size = UDim2.fromOffset(150, 28), Position = UDim2.new(1, -330, 0, 13), BackgroundColor3 = C.card,
+    Text = "", PlaceholderText = "Search...", PlaceholderColor3 = C.mut, TextColor3 = C.txt,
+    Font = Enum.Font.Gotham, TextSize = 12, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
+}, top)
+round(searchBox, 8)
+new("UIPadding", {PaddingLeft = UDim.new(0, 10)}, searchBox)
+
+local function topBtn(txt, xOff, w)
     local b = new("TextButton", {
-        Size = UDim2.fromOffset(26, 26), Position = UDim2.new(1, xOff, 0, 10), BackgroundColor3 = C.card,
-        Text = txt, TextColor3 = C.mut, Font = Enum.Font.GothamBold, TextSize = 14, AutoButtonColor = false,
+        Size = UDim2.fromOffset(w or 28, 28), Position = UDim2.new(1, xOff, 0, 13), BackgroundColor3 = C.card,
+        Text = txt, TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = false,
     }, top)
     round(b, 8)
     return b
 end
 local btnClose = topBtn("x", -38)
 local btnMin = topBtn("-", -70)
+local btnCfg = topBtn("Config.", -146, 70)
 btnClose.MouseButton1Click:Connect(destroyAll)
 new("Frame", {
-    Size = UDim2.new(1, -20, 0, 1), Position = UDim2.fromOffset(10, 46), BackgroundColor3 = C.line, BorderSizePixel = 0,
+    Size = UDim2.new(1, -20, 0, 1), Position = UDim2.fromOffset(10, 54), BackgroundColor3 = C.line, BorderSizePixel = 0,
 }, main)
 
 local function toggleMain() main.Visible = not main.Visible end
@@ -155,8 +184,7 @@ keep(UIS.InputBegan:Connect(function(i, gp)
     if not gp and i.KeyCode == Enum.KeyCode.RightShift then toggleMain() end
 end))
 
--- arrastar janela
-do
+do -- arrastar janela
     local dragging, dStart, sPos = false, nil, nil
     top.InputBegan:Connect(function(i)
         if isPress(i) then dragging = true dStart = i.Position sPos = main.Position end
@@ -172,15 +200,85 @@ do
     end))
 end
 
--- botao flutuante
+-- BOTAO FLUTUANTE: constelacao de Orion desenhada por codigo (ou imagem sua em BUTTON_IMAGE)
 do
     local fb = new("TextButton", {
-        Size = UDim2.fromOffset(44, 44), Position = UDim2.new(0, 16, 0.5, -22), BackgroundColor3 = C.bg,
-        Text = "O", TextColor3 = C.acc, Font = Enum.Font.GothamBlack, TextSize = 20, AutoButtonColor = false,
-        ZIndex = 50,
+        Size = UDim2.fromOffset(54, 54), Position = UDim2.new(0, 16, 0.5, -27), BackgroundColor3 = Color3.fromRGB(8, 10, 24),
+        Text = "", AutoButtonColor = false, ZIndex = 50, ClipsDescendants = true,
     }, gui)
-    round(fb, 22)
+    round(fb, 27)
     new("UIStroke", {Thickness = 2, Color = C.acc}, fb)
+    new("UIGradient", {
+        Color = ColorSequence.new(Color3.fromRGB(26, 30, 66), Color3.fromRGB(6, 7, 18)), Rotation = 60,
+    }, fb)
+    local art = new("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ZIndex = 51}, fb)
+
+    local S = 54
+    local pts = {
+        meissa = {0.50, 0.14}, betel = {0.33, 0.27}, bella = {0.68, 0.27},
+        mintaka = {0.61, 0.52}, alnilam = {0.51, 0.54}, alnitak = {0.41, 0.56},
+        saiph = {0.37, 0.80}, rigel = {0.71, 0.79},
+    }
+    local function P(n) return pts[n][1] * S, pts[n][2] * S end
+    local function line(a, b)
+        local x1, y1 = P(a)
+        local x2, y2 = P(b)
+        local len = math.sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
+        local ang = math.deg(math.atan2(y2 - y1, x2 - x1))
+        new("Frame", {
+            Size = UDim2.fromOffset(len, 1), AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2), Rotation = ang,
+            BackgroundColor3 = Color3.fromRGB(170, 185, 255), BackgroundTransparency = 0.45, BorderSizePixel = 0, ZIndex = 51,
+        }, art)
+    end
+    for _, l in ipairs({{"betel", "meissa"}, {"meissa", "bella"}, {"betel", "alnitak"}, {"bella", "mintaka"},
+        {"alnitak", "alnilam"}, {"alnilam", "mintaka"}, {"alnitak", "saiph"}, {"mintaka", "rigel"}}) do
+        line(l[1], l[2])
+    end
+    local function star(n, size, col)
+        local x, y = P(n)
+        local s = new("Frame", {
+            Size = UDim2.fromOffset(size, size), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(x, y),
+            BackgroundColor3 = col, BorderSizePixel = 0, ZIndex = 53,
+        }, art)
+        round(s, size)
+        local g = new("Frame", {
+            Size = UDim2.fromOffset(size * 2.6, size * 2.6), AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromOffset(x, y), BackgroundColor3 = col, BackgroundTransparency = 0.8,
+            BorderSizePixel = 0, ZIndex = 52,
+        }, art)
+        round(g, size * 3)
+    end
+    star("betel", 5, Color3.fromRGB(255, 190, 170))
+    star("rigel", 5, Color3.fromRGB(210, 225, 255))
+    star("bella", 3, Color3.fromRGB(190, 210, 255))
+    star("meissa", 3, Color3.fromRGB(190, 210, 255))
+    star("mintaka", 3, Color3.fromRGB(200, 220, 255))
+    star("alnilam", 3, Color3.fromRGB(200, 220, 255))
+    star("alnitak", 3, Color3.fromRGB(200, 220, 255))
+    star("saiph", 3, Color3.fromRGB(190, 210, 255))
+
+    if BUTTON_IMAGE ~= "" then
+        task.spawn(function()
+            local src = BUTTON_IMAGE
+            if string.sub(src, 1, 4) == "http" then
+                local ok, res = pcall(function()
+                    writefile("orion_btn.png", game:HttpGet(src))
+                    return getcustomasset("orion_btn.png")
+                end)
+                src = ok and res or nil
+            end
+            if src then
+                local img = new("ImageLabel", {
+                    Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Image = src,
+                    ScaleType = Enum.ScaleType.Crop, ZIndex = 60,
+                }, fb)
+                round(img, 27)
+                art.Visible = false
+            end
+        end)
+    end
+
     local drag, moved, startP, startPos = false, false, nil, nil
     fb.InputBegan:Connect(function(i)
         if isPress(i) then drag = true moved = false startP = i.Position startPos = fb.Position end
@@ -202,19 +300,20 @@ do
     end))
 end
 
---==================== UI: componentes ====================
+--==================== UI: componentes (cards estilo Maru) ====================
 local side = new("ScrollingFrame", {
-    Size = UDim2.new(0, 124, 1, -66), Position = UDim2.fromOffset(10, 56), BackgroundTransparency = 1,
+    Size = UDim2.new(0, 126, 1, -66), Position = UDim2.fromOffset(10, 62), BackgroundTransparency = 1,
     BorderSizePixel = 0, ScrollBarThickness = 0, CanvasSize = UDim2.new(),
     AutomaticCanvasSize = Enum.AutomaticSize.Y,
 }, main)
 new("UIListLayout", {Padding = UDim.new(0, 3)}, side)
 local content = new("Frame", {
-    Size = UDim2.new(1, -152, 1, -66), Position = UDim2.fromOffset(142, 56), BackgroundTransparency = 1,
+    Size = UDim2.new(1, -156, 1, -68), Position = UDim2.fromOffset(146, 62), BackgroundTransparency = 1,
 }, main)
 
-local tabs = {}
+local tabs, curTab = {}, nil
 local function selectTab(t)
+    curTab = t
     for _, o in ipairs(tabs) do
         local on = (o == t)
         o.page.Visible = on
@@ -224,25 +323,16 @@ local function selectTab(t)
     end
 end
 
--- registro de funcoes: ligar uma desliga as outras (evita brigar pelo movimento)
-local features = {}
+local toggles = {}      -- key -> {set, isOn, group}
 local statusSetters = {}
 local function setSt(key, text)
     local f = statusSetters[key]
     if f then f(text) end
 end
-local function stopOthers(group)
-    for _, f in pairs(features) do
-        if f.group and f.group ~= group and f.isOn() then f.set(false) end
-    end
+local function uiSet(key, v)
+    local t = toggles[key]
+    if t then t.set(v) else Config[key] = v end
 end
-local function otherOn(group)
-    for _, f in pairs(features) do
-        if f.group and f.group ~= group and f.isOn() then return true end
-    end
-    return false
-end
-local function stopMovers() stopOthers("__none__") end
 
 local function makeSwitch(parent, pos)
     local track = new("TextButton", {
@@ -260,34 +350,6 @@ local function makeSwitch(parent, pos)
         TS:Create(knob, TweenInfo.new(0.15), {Position = on and UDim2.fromOffset(23, 3) or UDim2.fromOffset(3, 3)}):Play()
     end
     return sw
-end
-
-local function bind(sw, key, cb, group)
-    local on = false
-    local obj = {group = group}
-    function obj.isOn() return on end
-    local function apply(v)
-        on = v and true or false
-        Config[key] = on
-        sw.render(on)
-        saveCfg()
-        pcall(cb, on)
-    end
-    function obj.set(v) if on ~= v then apply(v) end end
-    sw.btn.MouseButton1Click:Connect(function()
-        if not on and group then stopOthers(group) end
-        apply(not on)
-    end)
-    features[key] = obj
-    local want = Config[key] == true
-    if want and group and otherOn(group) then
-        want = false
-        Config[key] = false
-    end
-    on = want
-    sw.render(on)
-    if on then pcall(cb, true) end
-    return obj
 end
 
 local function newTab(name)
@@ -308,172 +370,266 @@ local function newTab(name)
         ScrollBarThickness = 3, ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(),
         AutomaticCanvasSize = Enum.AutomaticSize.Y, Visible = false,
     }, content)
-    new("UIListLayout", {Padding = UDim.new(0, 8)}, page)
-    new("UIPadding", {
-        PaddingTop = UDim.new(0, 2), PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 12),
-    }, page)
+    new("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, page)
+    new("UIPadding", {PaddingTop = UDim.new(0, 2), PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 12)}, page)
 
-    local t = {btn = btn, bar = bar, page = page}
+    local t = {btn = btn, bar = bar, page = page, cards = {}, order = 0}
     table.insert(tabs, t)
     btn.MouseButton1Click:Connect(function() selectTab(t) end)
 
-    function t.Section(text)
+    local function nextOrder()
+        t.order = t.order + 1
+        return t.order
+    end
+    local function reg(frame, title, desc)
+        frame.LayoutOrder = nextOrder()
+        table.insert(t.cards, {f = frame, s = string.lower((title or "") .. " " .. (desc or ""))})
+    end
+    local function heading(card, title, desc, rightPad)
+        new("TextLabel", {
+            Size = UDim2.new(1, -rightPad, 0, 18), Position = UDim2.fromOffset(14, 9), BackgroundTransparency = 1,
+            Text = title, TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+        }, card)
         return new("TextLabel", {
-            Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, Text = string.upper(text),
-            TextColor3 = C.mut, Font = Enum.Font.GothamBold, TextSize = 11,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Bottom,
+            Size = UDim2.new(1, -rightPad, 0, 26), Position = UDim2.fromOffset(14, 28), BackgroundTransparency = 1,
+            Text = desc or "", TextColor3 = C.mut, Font = Enum.Font.Gotham, TextSize = 11, TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+        }, card)
+    end
+
+    function t.Section(text)
+        local l = new("TextLabel", {
+            Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, Text = text, TextColor3 = C.mut,
+            Font = Enum.Font.GothamMedium, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Bottom,
         }, page)
+        reg(l, "", "")
+        return l
     end
 
     function t.Note(text)
-        return new("TextLabel", {
+        local l = new("TextLabel", {
             Size = UDim2.new(1, 0, 0, 16), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
             Text = text, TextColor3 = C.mut, Font = Enum.Font.Gotham, TextSize = 12, TextWrapped = true,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
         }, page)
-    end
-    t.Label = t.Note
-
-    function t.Button(text, cb, primary)
-        local b = new("TextButton", {
-            Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = primary and C.acc or C.card, Text = text,
-            TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 13, AutoButtonColor = false,
-        }, page)
-        round(b, 10)
-        b.MouseButton1Click:Connect(function() pcall(cb) end)
+        reg(l, text, "")
+        return l
     end
 
-    -- opcao simples (ligar/desligar)
-    function t.Toggle(text, key, cb, group)
-        local f = new("Frame", {Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = C.card}, page)
-        round(f, 10)
-        new("TextLabel", {
-            Size = UDim2.new(1, -76, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
-            Text = text, TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
-        }, f)
-        local sw = makeSwitch(f, UDim2.new(1, -54, 0.5, -11))
-        return bind(sw, key, cb, group)
+    -- liga/desliga ligado a Config[key]; cb(on) opcional; group = exclusivo entre funcoes do mesmo grupo
+    local function bind(sw, key, cb, group)
+        local obj = {group = group}
+        local on = false
+        local function apply(v)
+            on = v and true or false
+            Config[key] = on
+            sw.render(on)
+            saveCfg()
+            if cb then pcall(cb, on) end
+        end
+        function obj.isOn() return on end
+        function obj.set(v) if on ~= v then apply(v) end end
+        sw.btn.MouseButton1Click:Connect(function()
+            if not on and group then
+                for k, o in pairs(toggles) do
+                    if o ~= obj and o.group == group and o.isOn() then o.set(false) end
+                end
+            end
+            apply(not on)
+        end)
+        toggles[key] = obj
+        on = Config[key] == true
+        if on and group then
+            for k, o in pairs(toggles) do
+                if o ~= obj and o.group == group and o.isOn() then on = false Config[key] = false end
+            end
+        end
+        sw.render(on)
+        if on and cb then task.defer(function() pcall(cb, true) end) end
+        return obj
     end
 
-    -- funcao automatica com status embaixo
-    function t.Feature(title, key, cb, group)
-        local card = new("Frame", {Size = UDim2.new(1, 0, 0, 62), BackgroundColor3 = C.card}, page)
+    function t.Toggle(title, desc, key, cb, group)
+        local card = new("Frame", {Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = C.card}, page)
         round(card, 10)
-        new("TextLabel", {
-            Size = UDim2.new(1, -76, 0, 18), Position = UDim2.fromOffset(12, 9), BackgroundTransparency = 1,
-            Text = title, TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 14,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-        }, card)
-        local st = new("TextLabel", {
-            Size = UDim2.new(1, -76, 0, 28), Position = UDim2.fromOffset(12, 28), BackgroundTransparency = 1,
-            Text = "Desligado", TextColor3 = C.mut, Font = Enum.Font.Gotham, TextSize = 12, TextWrapped = true,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-        }, card)
-        statusSetters[key] = function(txt) st.Text = txt end
-        local sw = makeSwitch(card, UDim2.new(1, -54, 0, 20))
-        return bind(sw, key, cb, group)
+        local d = heading(card, title, desc, 80)
+        local sw = makeSwitch(card, UDim2.new(1, -58, 0.5, -11))
+        reg(card, title, desc)
+        return bind(sw, key, cb, group), d
     end
 
-    function t.Slider(text, min, max, key)
-        local def = Config[key]
-        local f = new("Frame", {Size = UDim2.new(1, 0, 0, 50), BackgroundColor3 = C.card}, page)
-        round(f, 10)
-        new("TextLabel", {
-            Size = UDim2.new(1, -90, 0, 20), Position = UDim2.fromOffset(12, 7), BackgroundTransparency = 1,
-            Text = text, TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-        }, f)
-        local val = new("TextLabel", {
-            Size = UDim2.fromOffset(60, 20), Position = UDim2.new(1, -72, 0, 7), BackgroundTransparency = 1,
-            Text = tostring(def), TextColor3 = C.mut, Font = Enum.Font.GothamBold, TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Right,
-        }, f)
+    -- funcao automatica: a descricao mostra o status ao vivo
+    function t.Feature(title, key, group, cb)
+        local card = new("Frame", {Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = C.card}, page)
+        round(card, 10)
+        local d = heading(card, title, "Desligado", 80)
+        statusSetters[key] = function(txt) d.Text = txt end
+        local sw = makeSwitch(card, UDim2.new(1, -58, 0.5, -11))
+        reg(card, title, "")
+        return bind(sw, key, function(on)
+            if not on then d.Text = "Desligado" end
+            if cb then cb(on) end
+        end, group)
+    end
+
+    function t.Button(title, desc, btnText, cb)
+        local card = new("Frame", {Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = C.card}, page)
+        round(card, 10)
+        local d = heading(card, title, desc, 140)
+        local b = new("TextButton", {
+            Size = UDim2.fromOffset(100, 28), Position = UDim2.new(1, -114, 0.5, -14), BackgroundColor3 = C.acc,
+            Text = btnText or "Executar", TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamMedium,
+            TextSize = 12, AutoButtonColor = false,
+        }, card)
+        round(b, 8)
+        b.MouseButton1Click:Connect(function() pcall(cb) end)
+        reg(card, title, desc)
+        return d
+    end
+
+    function t.Slider(title, desc, min, max, key, cb)
+        local card = new("Frame", {Size = UDim2.new(1, 0, 0, 66), BackgroundColor3 = C.card}, page)
+        round(card, 10)
+        heading(card, title, desc, 100)
+        local box = new("TextBox", {
+            Size = UDim2.fromOffset(62, 24), Position = UDim2.new(1, -76, 0, 8), BackgroundColor3 = C.bg,
+            Text = tostring(Config[key]), TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 12,
+            ClearTextOnFocus = false,
+        }, card)
+        round(box, 6)
         local track = new("Frame", {
-            Size = UDim2.new(1, -24, 0, 4), Position = UDim2.fromOffset(12, 36), BackgroundColor3 = C.off,
-            BorderSizePixel = 0,
-        }, f)
-        round(track, 2)
-        local a0 = math.clamp((def - min) / (max - min), 0, 1)
-        local fill = new("Frame", {
-            Size = UDim2.new(a0, 0, 1, 0), BackgroundColor3 = C.acc, BorderSizePixel = 0,
-        }, track)
-        round(fill, 2)
+            Size = UDim2.new(1, -28, 0, 6), Position = UDim2.fromOffset(14, 54), BackgroundColor3 = C.off, BorderSizePixel = 0,
+        }, card)
+        round(track, 3)
+        local a0 = math.clamp((Config[key] - min) / (max - min), 0, 1)
+        local fill = new("Frame", {Size = UDim2.new(a0, 0, 1, 0), BackgroundColor3 = C.acc, BorderSizePixel = 0}, track)
+        round(fill, 3)
         local knob = new("Frame", {
             Size = UDim2.fromOffset(12, 12), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(a0, 0, 0.5, 0),
             BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 2,
         }, track)
         round(knob, 6)
         local hit = new("TextButton", {
-            Size = UDim2.new(1, -12, 0, 26), Position = UDim2.fromOffset(6, 24), BackgroundTransparency = 1, Text = "",
-        }, f)
-        local drag = false
-        local function setX(x)
-            local a = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-            local v = math.floor(min + (max - min) * a + 0.5)
+            Size = UDim2.new(1, -14, 0, 22), Position = UDim2.fromOffset(7, 46), BackgroundTransparency = 1, Text = "",
+        }, card)
+        local isInt = (min % 1 == 0 and max % 1 == 0 and (max - min) >= 10)
+        local function setValue(v)
+            v = math.clamp(v, min, max)
+            if isInt then v = math.floor(v + 0.5) else v = math.floor(v * 100 + 0.5) / 100 end
+            Config[key] = v
+            local a = (v - min) / (max - min)
             fill.Size = UDim2.new(a, 0, 1, 0)
             knob.Position = UDim2.new(a, 0, 0.5, 0)
-            val.Text = tostring(v)
-            Config[key] = v
+            box.Text = tostring(v)
+            if cb then pcall(cb, v) end
         end
+        local drag = false
         hit.InputBegan:Connect(function(i)
-            if isPress(i) then drag = true setX(i.Position.X) end
+            if isPress(i) then
+                drag = true
+                setValue(min + (max - min) * math.clamp((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1))
+            end
         end)
         keep(UIS.InputChanged:Connect(function(i)
-            if drag and isMove(i) then setX(i.Position.X) end
+            if drag and isMove(i) then
+                setValue(min + (max - min) * math.clamp((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1))
+            end
         end))
         keep(UIS.InputEnded:Connect(function(i)
             if drag and isPress(i) then drag = false saveCfg() end
         end))
+        box.FocusLost:Connect(function()
+            local n = tonumber(box.Text)
+            if n then setValue(n) saveCfg() else box.Text = tostring(Config[key]) end
+        end)
+        reg(card, title, desc)
     end
 
-    function t.Choice(text, options, key)
-        local f = new("Frame", {Size = UDim2.new(1, 0, 0, 62), BackgroundColor3 = C.card}, page)
-        round(f, 10)
-        new("TextLabel", {
-            Size = UDim2.new(1, -24, 0, 20), Position = UDim2.fromOffset(12, 7), BackgroundTransparency = 1,
-            Text = text, TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Left,
-        }, f)
-        local row = new("Frame", {
-            Size = UDim2.new(1, -24, 0, 26), Position = UDim2.fromOffset(12, 30), BackgroundTransparency = 1,
-        }, f)
-        local n = #options
-        local buttons = {}
-        local function mark()
-            for i, b in ipairs(buttons) do
-                b.BackgroundColor3 = (options[i] == Config[key]) and C.acc or C.off
+    -- lista suspensa: options pode ser trocada depois com obj.setOptions
+    function t.Dropdown(title, desc, options, key, cb, maxVisible)
+        local card = new("Frame", {Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = C.card, ClipsDescendants = true}, page)
+        round(card, 10)
+        heading(card, title, desc, 160)
+        local valBtn = new("TextButton", {
+            Size = UDim2.fromOffset(132, 28), Position = UDim2.new(1, -146, 0, 15), BackgroundColor3 = C.off,
+            Text = "", TextColor3 = C.txt, Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = false,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+        }, card)
+        round(valBtn, 8)
+        local list = new("ScrollingFrame", {
+            Size = UDim2.new(1, -20, 0, 0), Position = UDim2.fromOffset(10, 64), BackgroundTransparency = 1,
+            BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        }, card)
+        new("UIListLayout", {Padding = UDim.new(0, 3)}, list)
+        local obj = {options = options}
+        local open = false
+        local mv = maxVisible or 6
+        local function show(cur) valBtn.Text = (cur ~= nil and cur ~= "") and (tostring(cur) .. "   v") or "None   v" end
+        local function relayout()
+            local rows = math.min(#obj.options, mv)
+            list.Size = UDim2.new(1, -20, 0, rows * 29)
+            card.Size = UDim2.new(1, 0, 0, open and (72 + rows * 29) or 58)
+        end
+        function obj.setOptions(opts)
+            obj.options = opts
+            for _, c in ipairs(list:GetChildren()) do
+                if c:IsA("TextButton") then c:Destroy() end
             end
+            for _, o in ipairs(opts) do
+                local b = new("TextButton", {
+                    Size = UDim2.new(1, -6, 0, 26), BackgroundColor3 = C.bg, Text = tostring(o), TextColor3 = C.txt,
+                    Font = Enum.Font.Gotham, TextSize = 12, AutoButtonColor = false,
+                }, list)
+                round(b, 6)
+                b.MouseButton1Click:Connect(function()
+                    Config[key] = o
+                    show(o)
+                    open = false
+                    relayout()
+                    saveCfg()
+                    if cb then pcall(cb, o) end
+                end)
+            end
+            relayout()
         end
-        for i, name in ipairs(options) do
-            local b = new("TextButton", {
-                Size = UDim2.new(1 / n, -6, 1, 0), Position = UDim2.new((i - 1) / n, 3, 0, 0),
-                BackgroundColor3 = C.off, Text = name, TextColor3 = C.txt,
-                Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = false,
-            }, row)
-            round(b, 6)
-            buttons[i] = b
-            b.MouseButton1Click:Connect(function()
-                Config[key] = name
-                saveCfg()
-                mark()
-            end)
-        end
-        mark()
+        valBtn.MouseButton1Click:Connect(function() open = not open relayout() end)
+        show(Config[key])
+        obj.setOptions(options)
+        reg(card, title, desc)
+        return obj
     end
 
     return t
 end
 
-local tInfo = newTab("Principal")
-local tFarm = newTab("Farm")
-local tStack = newTab("Stack Farming")
-local tFruit = newTab("Fruit + Hop")
-local tTp = newTab("Teleport")
+-- busca: filtra os cards da aba atual
+local function applySearch()
+    if not curTab then return end
+    local q = string.lower(searchBox.Text or "")
+    for _, c in ipairs(curTab.cards) do
+        c.f.Visible = (q == "") or (c.s ~= " " and string.find(c.s, q, 1, true) ~= nil)
+    end
+end
+searchBox:GetPropertyChangedSignal("Text"):Connect(applySearch)
+
+local tMain = newTab("Main")
+local tMulti = newTab("Multi Farm")
+local tQuests = newTab("Quests")
+local tRace = newTab("Race")
+local tRaids = newTab("Raids")
+local tTrials = newTab("Trials")
+local tSea = newTab("Sea Event")
+local tFruit = newTab("Fruits")
+local tLoc = newTab("Location")
 local tESP = newTab("ESP")
-local tPlayer = newTab("Jogador")
-local tCfg = newTab("Configuracoes")
+local tPlayer = newTab("Player")
+local tAfk = newTab("Anti AFK")
+local tMisc = newTab("Diversos")
+local tCfg = newTab("Settings")
+btnCfg.MouseButton1Click:Connect(function() selectTab(tCfg) end)
 
 --==================== BASE ====================
 local function hum()
@@ -487,6 +643,14 @@ end
 local function getRem()
     local remotes = RepS:FindFirstChild("Remotes")
     return remotes and remotes:FindFirstChild("CommF_")
+end
+local function invoke(...)
+    local rem = getRem()
+    if not rem then return nil end
+    local args = {...}
+    local ok, res = pcall(function() return rem:InvokeServer(unpack(args)) end)
+    if ok then return res end
+    return nil
 end
 local function getLevel()
     local ok, v = pcall(function() return lp.Data.Level.Value end)
@@ -510,60 +674,90 @@ local function detectSea()
     end)
 end
 
--- TweenModel: tween do usuario (Heartbeat + Lerp). Adaptado para esperar terminar,
--- poder ser cancelado por alive() e NAO girar o personagem (nao trava a camera).
-local function TweenModel(targetCFrame, speed, alive)
+local function partOf(v)
+    if v:IsA("BasePart") then return v end
+    if v:IsA("Model") then
+        return v:FindFirstChild("HumanoidRootPart") or v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return nil
+end
+
+local function locationsFolder()
+    local wo = workspace:FindFirstChild("_WorldOrigin")
+    return wo and wo:FindFirstChild("Locations")
+end
+local function locationPos(sub)
+    local loc = locationsFolder()
+    if not loc then return nil end
+    for _, p in ipairs(loc:GetChildren()) do
+        if string.find(norm(p.Name), sub, 1, true) then
+            local ok, pos = pcall(function() return p:GetPivot().Position end)
+            if ok then return pos end
+        end
+    end
+    return nil
+end
+
+--==================== MOVIMENTO ====================
+-- Tween Lerp (Heartbeat): move o HumanoidRootPart em linha reta na velocidade (studs/s).
+-- Retorna true se chegou; false se cancelado. Nao gira o personagem (camera livre).
+local function moveTo(cf, speed, alive)
     local hrp = root()
     if not hrp then return false end
-    local startCFrame = hrp.CFrame
-    local goal = CFrame.new(targetCFrame.Position) * (startCFrame - startCFrame.Position)
-
-    -- distancia e tempo estimado pela velocidade
-    local distance = (startCFrame.Position - goal.Position).Magnitude
+    local startCF = hrp.CFrame
+    local goal = CFrame.new(cf.Position) * (startCF - startCF.Position)
+    local distance = (startCF.Position - goal.Position).Magnitude
     if distance < 1 then
         hrp.CFrame = goal
         return true
     end
     local duration = math.max(distance / math.max(speed, 10), 0.03)
-    local startTime = os.clock()
+    local t0 = os.clock()
+    local finished, cancelled = false, false
 
-    local done, cancelled = false, false
-    local connection
-    connection = RS.Heartbeat:Connect(function()
+    if Config.tweenMode == "Tween" then
+        local tw = TS:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = goal})
+        local cn = tw.Completed:Connect(function() finished = true end)
+        tw:Play()
+        while not finished and os.clock() - t0 < duration + 3 do
+            if Stopped or (alive and not alive()) or not root() then
+                cancelled = true
+                pcall(function() tw:Cancel() end)
+                break
+            end
+            task.wait(0.04)
+        end
+        cn:Disconnect()
+        return finished and not cancelled
+    end
+
+    local conn
+    conn = RS.Heartbeat:Connect(function()
         local cur = root()
-        if not cur then
+        if Stopped or not cur or (alive and not alive()) or os.clock() - t0 > duration + 4 then
             cancelled = true
-            done = true
-            connection:Disconnect()
+            conn:Disconnect()
             return
         end
-        if alive and not alive() then
-            cancelled = true
-            done = true
-            connection:Disconnect()
-            return
-        end
-        local alpha = math.min((os.clock() - startTime) / duration, 1)
-        -- movimento linear direto no CFrame
-        cur.CFrame = startCFrame:Lerp(goal, alpha)
+        local alpha = math.min((os.clock() - t0) / duration, 1)
+        cur.CFrame = startCF:Lerp(goal, alpha)
         if alpha >= 1 then
-            done = true
-            connection:Disconnect()
+            finished = true
+            conn:Disconnect()
         end
     end)
-    while not done and os.clock() - startTime < duration + 3 do
-        task.wait()
-    end
-    if not done then
-        pcall(function() connection:Disconnect() end)
-    end
-    return not cancelled
-end
-local function moveTo(cf, speed, alive)
-    return TweenModel(cf, speed, alive)
+    while not finished and not cancelled do task.wait() end
+    return finished
 end
 
--- posiciona o personagem. Por padrao NAO gira o personagem (nao trava a camera)
+-- posicao de ataque em relacao ao alvo (Above / Behind / Below)
+local function hoverPos(p, dist)
+    dist = dist or Config.farmDist
+    if Config.posMethod == "Behind" then return p + Vector3.new(0, 3, dist) end
+    if Config.posMethod == "Below" then return p - Vector3.new(0, dist, 0) end
+    return p + Vector3.new(0, dist, 0)
+end
+
 local function placeAt(pos, look)
     local r = root()
     if not r then return false end
@@ -575,17 +769,9 @@ local function placeAt(pos, look)
     return true
 end
 
-local function anyActive()
-    for _, v in pairs(active) do
-        if v then return true end
-    end
-    return false
-end
-
 -- noclip + sem queda durante as funcoes automaticas
 keep(RS.Stepped:Connect(function()
-    if not Config.noclip then return end
-    if not anyActive() then return end
+    if not Config.noclip or not (Running or TpBusy) then return end
     local c = lp.Character
     if not c then return end
     for _, p in ipairs(c:GetDescendants()) do
@@ -595,43 +781,71 @@ keep(RS.Stepped:Connect(function()
     if r then r.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end
 end))
 
--- anti AFK
-keep(lp.Idled:Connect(function()
-    pcall(function()
-        VU:CaptureController()
-        VU:ClickButton2(Vector2.new())
-    end)
-end))
-
+--==================== COMBATE ====================
 local lastHaki = 0
 local function ensureHaki()
     if not Config.haki then return end
     if os.clock() - lastHaki < 5 then return end
     lastHaki = os.clock()
     local c = lp.Character
-    if c and not c:FindFirstChild("HasBuso") then
-        local rem = getRem()
-        if rem then pcall(function() rem:InvokeServer("Buso") end) end
-    end
+    if c and not c:FindFirstChild("HasBuso") then invoke("Buso") end
 end
 
-local function equipWeapon()
-    ensureHaki()
+local function equipTip(tip)
     local c = lp.Character
     local h = hum()
     if not c or not h then return end
     local cur = c:FindFirstChildOfClass("Tool")
-    if cur and cur.ToolTip == Config.weapon then return end
+    if cur and cur.ToolTip == tip then return end
     for _, t in ipairs(lp.Backpack:GetChildren()) do
-        if t:IsA("Tool") and t.ToolTip == Config.weapon then
+        if t:IsA("Tool") and t.ToolTip == tip then
             h:EquipTool(t)
             return
         end
     end
 end
+local function equipWeapon()
+    ensureHaki()
+    equipTip(Config.weapon)
+end
 
--- Fast Attack: base do usuario (CombatFramework). O controller ativo muda ao trocar de arma,
--- entao ele e lido de novo a cada ataque.
+local function screenCenter()
+    local c = workspace.CurrentCamera
+    local v = c and c.ViewportSize or Vector2.new(800, 450)
+    return v.X / 2, v.Y / 2
+end
+-- se o hub estiver no ponto do clique, esconde para nao clicar nos botoes dele
+local function protectHub(x, y)
+    if not main.Visible then return end
+    local p, s = main.AbsolutePosition, main.AbsoluteSize
+    if x >= p.X - 10 and x <= p.X + s.X + 10 and y >= p.Y - 10 and y <= p.Y + s.Y + 50 then
+        main.Visible = false
+    end
+end
+local function m1click()
+    if VIM then
+        local x, y = screenCenter()
+        protectHub(x, y)
+        pcall(function()
+            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        end)
+    else
+        pcall(function()
+            VU:CaptureController()
+            VU:ClickButton1(Vector2.new(900, 500))
+        end)
+    end
+end
+local function toolActivate()
+    pcall(function()
+        local c = lp.Character
+        local tool = c and c:FindFirstChildOfClass("Tool")
+        if tool then tool:Activate() end
+    end)
+end
+
+-- Fast Attack: 4 metodos. No modo Auto ele troca de metodo sozinho se nao causar dano.
 local CombatFramework = nil
 task.spawn(function()
     pcall(function()
@@ -640,31 +854,260 @@ task.spawn(function()
         if mod then CombatFramework = require(mod) end
     end)
 end)
-local function fastAttackOnce()
+local function ctrl()
+    local ok, c = pcall(function() return CombatFramework and CombatFramework.activeController end)
+    if ok then return c end
+    return nil
+end
+local function atkCF()
+    local c = ctrl()
+    if c and c.active then
+        pcall(function()
+            c.timeToNextAttack = 0
+            c.hitboxTried = 0
+            c:attack()
+        end)
+        return true
+    end
+    return false
+end
+local function atkCF2()
+    local c = ctrl()
+    local a = c and c.active
+    if a then
+        pcall(function() if a.attacker and a.attacker.hitServerCode then a.attacker:hitServerCode() end end)
+        pcall(function() if a.weapon and a.weapon.attack then a.weapon:attack() end end)
+        return true
+    end
+    return false
+end
+local function getNet(name)
+    local mods = RepS:FindFirstChild("Modules")
+    local net = mods and mods:FindFirstChild("Net")
+    return net and net:FindFirstChild(name)
+end
+local function enemiesNear(radius)
+    local out = {}
+    local en = workspace:FindFirstChild("Enemies")
+    local r = root()
+    if not en or not r then return out end
+    for _, e in ipairs(en:GetChildren()) do
+        local h = e:FindFirstChildOfClass("Humanoid")
+        local p = e:FindFirstChild("HumanoidRootPart")
+        if h and p and h.Health > 0 and (p.Position - r.Position).Magnitude <= radius then
+            table.insert(out, e)
+        end
+    end
+    return out
+end
+local function atkRemote(extra)
+    local ra, rh = getNet("RE/RegisterAttack"), getNet("RE/RegisterHit")
+    if not (ra and rh) then return false end
+    local fired = false
     pcall(function()
-        local ctrl = typeof(CombatFramework) == "table" and CombatFramework.activeController
-        if ctrl and ctrl.active then
-            ctrl.timeToNextAttack = 0
-            ctrl.hitboxTried = 0
-            ctrl:attack()
+        local targets, mainPart = {}, nil
+        for _, e in ipairs(enemiesNear(60)) do
+            local part = e:FindFirstChild("Head") or e:FindFirstChild("HumanoidRootPart")
+            if part then
+                table.insert(targets, {e, part})
+                mainPart = mainPart or part
+            end
+        end
+        if extra then
+            for _, t in ipairs(extra) do
+                table.insert(targets, t)
+                mainPart = mainPart or t[2]
+            end
+        end
+        if mainPart then
+            ra:FireServer(0)
+            rh:FireServer(mainPart, targets)
+            fired = true
         end
     end)
+    return fired
 end
 
-local function doAttack()
-    if Config.fast then fastAttackOnce() end
-    pcall(function()
-        local c = lp.Character
-        local tool = c and c:FindFirstChildOfClass("Tool")
-        if tool then tool:Activate() end
+local METHODS = {"Moon", "CF", "CF2", "Remote", "Click"}
+local METHOD_NAMES = {Moon = "Moon", CombatFramework = "CF", ["CombatFramework 2"] = "CF2", Remote = "Remote", Click = "Click"}
+local Atk = {m = 1, hp = nil, lastHp = 0, lastDmg = 0, near = false}
+
+-- MOON FAST ATTACK (Melee e Sword): golpe do proprio jogo + registro de hit em todos os mobs no alcance
+-- Roda no Heartbeat, separado do movimento do farm (o tween nao atrapalha o ataque).
+local atkMoon, moonHandles
+do
+    local Net = {ready = false}
+    task.spawn(function()
+        local ok = pcall(function()
+            local modules = RepS:WaitForChild("Modules", 40)
+            local folder = modules and modules:WaitForChild("Net", 40)
+            Net.module = require(folder)
+            Net.reg = folder:WaitForChild("RE/RegisterAttack", 40)
+            Net.hit = folder:WaitForChild("RE/RegisterHit", 40)
+            assert(Net.reg and Net.hit)
+        end)
+        Net.ready = ok
     end)
-    pcall(function()
-        VU:CaptureController()
-        VU:ClickButton1(Vector2.new(900, 500))
-    end)
+
+    local holder, retryAt = nil, 0
+    local function findController()
+        if holder or os.clock() - retryAt < 3 then return holder end
+        retryAt = os.clock()
+        pcall(function()
+            local ps = lp:FindFirstChild("PlayerScripts")
+            local m = ps and ps:FindFirstChild("CombatFramework")
+            if not m then return end
+            local mod = require(m)
+            if type(mod) == "table" and mod.activeController ~= nil then
+                holder = mod
+                return
+            end
+            local gu = getupvalues or (debug and debug.getupvalues)
+            if gu then holder = gu(mod)[2] end
+        end)
+        return holder
+    end
+    local function gameSwing()
+        local h = findController()
+        local c = h and h.activeController
+        if not c then return end
+        pcall(function()
+            c.hitboxMagnitude = math.max(60, Config.moonRange)
+            c.timeToNextAttack = 0
+            c.attacking = false
+            c:attack()
+        end)
+    end
+    local function isAllyOrSelf(m)
+        if m == lp.Character then return true end
+        local n = string.lower(m.Name)
+        if n == string.lower(lp.Name) or string.find(n, "shadow", 1, true) or string.find(n, "summon", 1, true) then return true end
+        for _, a in ipairs({"Owner", "OwnerId", "OwnerUserId", "OwnerName", "Master", "Summoner", "SummonedBy"}) do
+            local v = m:GetAttribute(a)
+            if v ~= nil and v ~= "" and v ~= 0 then return true end
+        end
+        return false
+    end
+    local function collect(rootPart)
+        local out = {}
+        for _, folderName in ipairs({"Enemies", "Characters"}) do
+            local f = workspace:FindFirstChild(folderName)
+            if f then
+                for _, m in ipairs(f:GetChildren()) do
+                    if m:IsA("Model") and not isAllyOrSelf(m) and not m:GetAttribute("IsBoat") then
+                        if Players:GetPlayerFromCharacter(m) == nil then
+                            local h = m:FindFirstChildOfClass("Humanoid")
+                            local r = m:FindFirstChild("HumanoidRootPart")
+                            if h and r and h.Health > 0 then
+                                local d = (r.Position - rootPart.Position).Magnitude
+                                if d <= Config.moonRange then out[#out + 1] = {m, r, d} end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        table.sort(out, function(a, b) return a[3] < b[3] end)
+        return out
+    end
+    function moonHandles()
+        if not Net.ready then return false end
+        local char = lp.Character
+        local tool = char and char:FindFirstChildOfClass("Tool")
+        local wt = tool and tool:GetAttribute("WeaponType")
+        return wt == "Melee" or wt == "Sword"
+    end
+    function atkMoon()
+        if not moonHandles() then return false end
+        local char = lp.Character
+        local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+        local h = char and char:FindFirstChildOfClass("Humanoid")
+        if not (rootPart and h and h.Health > 0) then return false end
+        gameSwing()
+        local targets = collect(rootPart)
+        if #targets == 0 then return true end
+        local list, head = {}, nil
+        for i = 1, math.min(#targets, Config.moonTargets) do
+            local m = targets[i][1]
+            local added = false
+            for _, part in ipairs(m:GetChildren()) do
+                if part:IsA("BasePart") then list[#list + 1] = {m, part} added = true end
+            end
+            if not added then list[#list + 1] = {m, targets[i][2]} end
+            head = head or m:FindFirstChild("Head") or targets[i][2]
+        end
+        local hash = tostring(lp.UserId):sub(2, 4) .. tostring(coroutine.running()):sub(11, 15)
+        pcall(function()
+            Net.module:RemoteEvent("RegisterHit", true)
+            Net.reg:FireServer()
+            Net.hit:FireServer(head, list, {}, hash)
+        end)
+        return true
+    end
+    local last = 0
+    keep(RS.Heartbeat:Connect(function()
+        if Stopped or not Config.fast or not (Running or TpBusy) then return end
+        local mode = Config.atkMethod
+        local useMoon = (mode == "Moon") or (mode == "All") or (mode == "Auto" and Atk.m == 1)
+        if not useMoon then return end
+        if os.clock() - last < Config.atkDelay then return end
+        last = os.clock()
+        pcall(atkMoon)
+    end))
 end
 
--- mira com o mouse (sem travar a camera, a menos que a opcao esteja ligada)
+local function runMethod(name, extra)
+    if name == "Moon" then return moonHandles() end
+    if name == "CF" then return atkCF()
+    elseif name == "CF2" then return atkCF2()
+    elseif name == "Remote" then return atkRemote(extra)
+    end
+    toolActivate()
+    m1click()
+    return true
+end
+local function attackNow(extra)
+    if not Config.fast then
+        toolActivate()
+        m1click()
+        return
+    end
+    local mode = Config.atkMethod
+    if mode == "Auto" then
+        if METHODS[Atk.m] == "Moon" and not moonHandles() then Atk.m = 2 end
+        runMethod(METHODS[Atk.m], extra)
+    elseif mode == "All" then
+        for _, n in ipairs(METHODS) do runMethod(n, extra) end
+    else
+        runMethod(METHOD_NAMES[mode] or "CF", extra)
+    end
+end
+-- chamado a cada golpe: se o alvo nao perde vida por 2s, troca de metodo (e depois de posicao)
+local function watchDamage(h)
+    if Config.atkMethod ~= "Auto" or not h then return end
+    if Atk.hp ~= h then
+        Atk.hp, Atk.lastHp, Atk.lastDmg = h, h.Health, os.clock()
+        return
+    end
+    if h.Health < Atk.lastHp then Atk.lastDmg = os.clock() end
+    Atk.lastHp = h.Health
+    if os.clock() - Atk.lastDmg > 2 then
+        Atk.m = Atk.m % #METHODS + 1
+        Atk.lastDmg = os.clock()
+        if Atk.m == 1 then Atk.near = not Atk.near end
+    end
+end
+local function atkInfo()
+    local mode = Config.atkMethod == "Auto" and (METHODS[Atk.m] .. " (auto)") or Config.atkMethod
+    return "Metodo: " .. mode .. (Atk.near and " | colado no alvo" or "")
+end
+local function farmHover(d)
+    d = d or Config.farmDist
+    if Atk.near then d = math.min(d, 4) end
+    return d
+end
+
+-- mira + skills
 local function aimAt(pos)
     local cam = workspace.CurrentCamera
     if not cam then return end
@@ -688,71 +1131,8 @@ local function useSkills(pos)
     end
 end
 
-local function locationsFolder()
-    local wo = workspace:FindFirstChild("_WorldOrigin")
-    return wo and wo:FindFirstChild("Locations")
-end
-local function locationPos(sub)
-    local loc = locationsFolder()
-    if not loc then return nil end
-    for _, p in ipairs(loc:GetChildren()) do
-        if string.find(norm(p.Name), sub, 1, true) then
-            local ok, pos = pcall(function() return p:GetPivot().Position end)
-            if ok then return pos end
-        end
-    end
-    return nil
-end
-
-local function httpGet(url)
-    local ok, res = pcall(function() return game:HttpGet(url) end)
-    if ok and res and res ~= "" then return res end
-    local req = (syn and syn.request) or request or http_request
-    if req then
-        local ok2, r = pcall(function() return req({Url = url, Method = "GET"}) end)
-        if ok2 and r and r.Body then return r.Body end
-    end
-    return nil
-end
-
-local hopping = false
-local function serverHop(setS)
-    if hopping then return end
-    hopping = true
-    task.delay(20, function() hopping = false end)
-    local ok, err = pcall(function()
-        setS("procurando outro servidor...")
-        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-        local body = httpGet(url)
-        if not body then setS("nao consegui listar servidores (sem HTTP no executor?)") return end
-        local data = HttpService:JSONDecode(body)
-        local pool = {}
-        for _, s in ipairs(data.data or {}) do
-            if s.id ~= game.JobId and s.playing and s.maxPlayers and s.playing < s.maxPlayers - 1 then
-                table.insert(pool, s.id)
-            end
-        end
-        if #pool == 0 then setS("nenhum servidor livre agora, tentando de novo") return end
-        pcall(function()
-            if queue_on_teleport and isfile and isfile("OrionHub.lua") then
-                queue_on_teleport('loadstring(readfile("OrionHub.lua"))()')
-            end
-        end)
-        setS("indo para outro servidor...")
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, pool[math.random(1, #pool)], lp)
-    end)
-    if not ok then setS("erro no hop: " .. tostring(err)) end
-end
-keep(TeleportService.TeleportInitFailed:Connect(function() hopping = false end))
-
---==================== ALVOS (bosses / eventos) ====================
-local function partOfModel(m)
-    if m:IsA("BasePart") then return m end
-    if m:IsA("Model") then
-        return m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart", true)
-    end
-    return nil
-end
+--==================== ALVOS ====================
+local function partOfModel(m) return partOf(m) end
 
 local function targetsByNames(names, folders)
     local out = {}
@@ -787,94 +1167,343 @@ local function nearestOf(list)
     return best, bd
 end
 
--- Leviathan: segmentos primeiro; o corpo principal so leva dano depois
-local function leviathanTargets()
-    local all = targetsByNames({"leviathan"}, {"SeaBeasts"})
-    local segs = {}
-    for _, t in ipairs(all) do
-        if string.find(norm(t.mdl.Name), "segment", 1, true) then table.insert(segs, t) end
-    end
-    if #segs == 0 then
-        local f = workspace:FindFirstChild("SeaBeasts")
-        if f then
-            for _, m in ipairs(f:GetChildren()) do
-                if string.find(norm(m.Name), "leviathan", 1, true) then
-                    for _, d in ipairs(m:GetDescendants()) do
-                        if (d:IsA("Model") or d:IsA("BasePart")) and string.find(norm(d.Name), "segment", 1, true) then
-                            local part = partOfModel(d)
-                            local h = d:FindFirstChildOfClass("Humanoid")
-                            if part and (not h or h.Health > 0) then
-                                table.insert(segs, {mdl = d, part = part, hum = h})
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    if #segs > 0 then return segs end
-    return all
-end
-
--- ataca um alvo de cima, sem girar o personagem
+-- ataca um alvo de cima
 local function engage(tg, alive, hover, skills, speed, timeout)
     local r = root()
     if not r or not tg.part.Parent then return end
-    local function goal() return tg.part.Position + Vector3.new(0, hover, 0) end
+    local hv = hover
+    if Atk.near then hv = math.min(hover, 5) end
+    local function goal() return hoverPos(tg.part.Position, hv) end
     if (r.Position - goal()).Magnitude > 60 then
         if not moveTo(CFrame.new(goal()), speed, alive) then return end
     end
     equipWeapon()
-    local t0 = os.clock()
-    local lastSkill = 0
+    local t0, lastSkill = os.clock(), 0
     while alive() and tg.mdl.Parent and tg.part.Parent and os.clock() - t0 < (timeout or 30) do
         if tg.hum and tg.hum.Health <= 0 then break end
         if not placeAt(goal(), tg.part.Position) then break end
-        doAttack()
+        attackNow()
+        watchDamage(tg.hum)
         if skills and os.clock() - lastSkill > 1.5 then
             lastSkill = os.clock()
             useSkills(tg.part.Position)
         end
-        task.wait(0.1)
+        task.wait(Config.atkDelay)
     end
 end
 
--- loop generico: procura um boss/evento pelo nome e mata
-local function huntLoop(key, myGen, names, label, opts)
-    opts = opts or {}
-    local function alive() return active[key] and gens[key] == myGen end
-    local function setS(t) setSt(key, t) end
-    while alive() do
-        pcall(function()
-            local list = targetsByNames(names, opts.folders)
-            if #list == 0 then
-                if opts.idle then
-                    opts.idle(alive, setS)
-                else
-                    setS("aguardando " .. label .. " aparecer...")
-                    task.wait(1.5)
-                end
-                return
+--==================== NPCs ====================
+local function nameHas(model, pats)
+    local n = norm(model.Name)
+    local dn = ""
+    local h = model:FindFirstChildOfClass("Humanoid")
+    if h then dn = norm(h.DisplayName) end
+    for _, p in ipairs(pats) do
+        if string.find(n, p, 1, true) or string.find(dn, p, 1, true) then return true end
+    end
+    return false
+end
+local npcCache = {}
+local function findNPC(pats)
+    local r = root()
+    local best, bd
+    local function consider(m)
+        if m:IsA("Model") and nameHas(m, pats) then
+            local part = partOf(m)
+            if part then
+                local d = r and (part.Position - r.Position).Magnitude or 0
+                if not bd or d < bd then best, bd = part, d end
             end
-            local best, bd = nearestOf(list)
-            setS(label .. " encontrado (" .. math.floor(bd or 0) .. "m)")
-            engage(best, alive, Config.bossHeight, Config.bossSkills, Config.tweenSpeed, 40)
-        end)
-        task.wait(0.2)
-    end
-    if gens[key] == myGen then setS("desligado") end
-end
-
-local function moverCb(key, runner, quiet)
-    return function(v)
-        active[key] = v and true or false
-        gens[key] = (gens[key] or 0) + 1
-        if v then
-            task.spawn(runner, gens[key])
-        elseif not quiet then
-            setSt(key, "desligado")
         end
     end
+    local npcs = workspace:FindFirstChild("NPCs")
+    if npcs then
+        for _, m in ipairs(npcs:GetChildren()) do consider(m) end
+    end
+    if not best then
+        for _, m in ipairs(workspace:GetChildren()) do consider(m) end
+    end
+    if best then return best end
+    local key = table.concat(pats, "|")
+    local c = npcCache[key]
+    if c and os.clock() - c.t < 10 then return c.part end
+    local found
+    local n = 0
+    for _, d in ipairs(workspace:GetDescendants()) do
+        n = n + 1
+        if n % 4000 == 0 then task.wait() end
+        if d:IsA("Model") and nameHas(d, pats) then
+            local part = partOf(d)
+            if part then found = part break end
+        end
+    end
+    npcCache[key] = {t = os.clock(), part = found}
+    return found
+end
+
+-- vai ate um NPC: se ele nao carregou, voa ate a ilha dele (locKeys) e procura
+local function approachNPC(pats, locKeys, alive, setS, label)
+    for attempt = 1, 40 do
+        if not alive() then return nil end
+        local r = root()
+        if not r then return nil end
+        local npc = findNPC(pats)
+        if npc then
+            local d = (r.Position - npc.Position).Magnitude
+            if d > 20 then
+                setS("indo ate " .. label .. " (" .. math.floor(d) .. "m)")
+                moveTo(CFrame.new(npc.Position + Vector3.new(0, 3, 4)), Config.tweenSpeed, alive)
+            end
+            r = root()
+            if r and (r.Position - npc.Position).Magnitude < 25 then return npc end
+        else
+            local lpos
+            for _, k in ipairs(locKeys or {}) do lpos = lpos or locationPos(k) end
+            if not lpos then
+                setS("nao achei " .. label .. " (va ate a ilha dele uma vez)")
+                task.wait(2)
+                return nil
+            end
+            local d = (r.Position - lpos).Magnitude
+            if d > 500 then
+                setS("indo para a ilha de " .. label .. " (" .. math.floor(d) .. "m)")
+                local dir = lpos - r.Position
+                local stepLen = math.min(dir.Magnitude, 700)
+                local tgt = r.Position + dir.Unit * stepLen
+                moveTo(CFrame.new(tgt.X, lpos.Y + 70, tgt.Z), Config.tweenSpeed, alive)
+            else
+                setS("procurando " .. label .. "...")
+                local ang = attempt * 1.3
+                moveTo(CFrame.new(lpos + Vector3.new(math.cos(ang) * 120, 40, math.sin(ang) * 120)), Config.tweenSpeed, alive)
+                task.wait(1)
+            end
+        end
+    end
+    return nil
+end
+
+local function firePrompts(model)
+    local n = 0
+    if not model then return n end
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("ProximityPrompt") and fireproximityprompt then
+            pcall(function() d.HoldDuration = 0 end)
+            pcall(fireproximityprompt, d)
+            n = n + 1
+        elseif d:IsA("ClickDetector") and fireclickdetector then
+            pcall(fireclickdetector, d)
+            n = n + 1
+        end
+    end
+    return n
+end
+
+--==================== HTTP / SERVER HOP ====================
+local function httpGet(url)
+    local ok, res = pcall(function() return game:HttpGet(url) end)
+    if ok and res and res ~= "" then return res end
+    local req = (syn and syn.request) or request or http_request
+    if req then
+        local ok2, r = pcall(function() return req({Url = url, Method = "GET"}) end)
+        if ok2 and r and r.Body then return r.Body end
+    end
+    return nil
+end
+local hopping, hopFailed, hopBad = false, false, {}
+keep(TeleportService.TeleportInitFailed:Connect(function() hopping = false hopFailed = true end))
+local function serverHop(setS)
+    if hopping then return end
+    hopping = true
+    task.delay(40, function() hopping = false end)
+    local ok, err = pcall(function()
+        setS("procurando outro servidor...")
+        local pool, cursor = {}, ""
+        for _ = 1, 3 do
+            local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100"
+            if cursor ~= "" then url = url .. "&cursor=" .. cursor end
+            local body = httpGet(url)
+            if not body then break end
+            local data = HttpService:JSONDecode(body)
+            for _, sv in ipairs(data.data or {}) do
+                if sv.id ~= game.JobId and not hopBad[sv.id] and sv.playing and sv.maxPlayers and sv.playing < sv.maxPlayers - 2 then
+                    table.insert(pool, sv.id)
+                end
+            end
+            cursor = data.nextPageCursor or ""
+            if #pool >= 10 or cursor == "" then break end
+        end
+        pcall(function()
+            if queue_on_teleport and isfile and isfile("OrionHub.lua") then
+                queue_on_teleport('loadstring(readfile("OrionHub.lua"))()')
+            end
+        end)
+        if #pool > 0 then
+            -- se o jogo recusar o servidor (erro 773 etc.), marca e tenta o proximo
+            for attempt = 1, 4 do
+                local id = pool[math.random(1, #pool)]
+                hopFailed = false
+                setS("indo para outro servidor (" .. attempt .. "/4)...")
+                local okT = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, id, lp) end)
+                local t0 = os.clock()
+                while okT and not hopFailed and os.clock() - t0 < 7 do task.wait(0.3) end
+                if okT and not hopFailed then return end
+                hopBad[id] = true
+                task.wait(1.5)
+            end
+        end
+        setS("o jogo recusou os servidores (erro 773); usando teleporte aleatorio")
+        TeleportService:Teleport(game.PlaceId, lp)
+    end)
+    if not ok then
+        hopping = false
+        setS("erro no hop: " .. tostring(err))
+    end
+end
+
+--==================== AGENDADOR (prioridades) ====================
+-- Funcoes de prioridade alta (fruta, bosses, eventos, raid) INTERROMPEM o farm quando tem algo para fazer
+-- e o farm volta sozinho depois. Quanto menor o numero, maior a prioridade.
+local Sched = {list = {}}
+local function regFeature(key, prio, has, run, en)
+    table.insert(Sched.list, {key = key, prio = prio, has = has, run = run, en = en})
+    table.sort(Sched.list, function(a, b) return a.prio < b.prio end)
+end
+local function featOn(f)
+    if f.en then return f.en() end
+    return Config[f.key] == true
+end
+local function higherWants(prio)
+    for _, f in ipairs(Sched.list) do
+        if f.prio >= prio then break end
+        if featOn(f) then
+            local ok, h = pcall(f.has)
+            if ok and h then return true end
+        end
+    end
+    return false
+end
+local function startScheduler()
+    task.spawn(function()
+        while not Stopped and gui.Parent do
+            local chosen
+            for _, f in ipairs(Sched.list) do
+                if featOn(f) then
+                    local ok, h = pcall(f.has)
+                    if ok and h then chosen = f break end
+                end
+            end
+            if chosen then
+                Running = true
+                local lastCheck, cached = 0, false
+                local function alive()
+                    if Stopped or not featOn(chosen) then return false end
+                    if os.clock() - lastCheck > 0.3 then
+                        lastCheck = os.clock()
+                        cached = higherWants(chosen.prio)
+                    end
+                    return not cached
+                end
+                local ok, err = pcall(chosen.run, alive, function(t) setSt(chosen.key, t) end)
+                if not ok then
+                    setSt(chosen.key, "erro: " .. tostring(err))
+                    task.wait(1.5)
+                end
+            else
+                Running = false
+                task.wait(0.4)
+            end
+            task.wait(0.03)
+        end
+        Running = false
+    end)
+end
+
+--==================== HELPERS DE INTERFACE (cliques em botoes/dialogos) ====================
+local mainGui, chainVisible, clickUi
+do
+function mainGui()
+    local pg = lp:FindFirstChild("PlayerGui")
+    return pg and pg:FindFirstChild("Main")
+end
+function chainVisible(o, stop)
+    local cur = o
+    while cur and cur ~= stop do
+        if cur:IsA("GuiObject") and not cur.Visible then return false end
+        cur = cur.Parent
+    end
+    return true
+end
+local function trimLower(s)
+    local t = string.gsub(s or "", "^%s*(.-)%s*$", "%1")
+    return string.lower(t)
+end
+local function guiCenter(obj)
+    local sg = obj:FindFirstAncestorOfClass("ScreenGui")
+    local insetY = 0
+    if not (sg and sg.IgnoreGuiInset) then
+        local okI, inset = pcall(function() return GuiService:GetGuiInset() end)
+        if okI and inset then insetY = inset.Y end
+    end
+    return obj.AbsolutePosition.X + obj.AbsoluteSize.X / 2, obj.AbsolutePosition.Y + obj.AbsoluteSize.Y / 2 + insetY
+end
+local function activateGui(obj)
+    local clicked = false
+    if VIM then
+        pcall(function()
+            local x, y = guiCenter(obj)
+            protectHub(x, y)
+            VIM:SendMouseMoveEvent(x, y, game)
+            task.wait(0.05)
+            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            task.wait(0.05)
+            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+            clicked = true
+        end)
+        task.wait(0.3)
+        if clicked then return true end
+    end
+    local fired = false
+    pcall(function()
+        if getconnections then
+            for _, sigName in ipairs({"MouseButton1Click", "Activated", "MouseButton1Down", "MouseButton1Up"}) do
+                local okc, list = pcall(function() return getconnections(obj[sigName]) end)
+                if okc and type(list) == "table" then
+                    for _, cn in ipairs(list) do
+                        if pcall(function() cn:Fire() end) then fired = true end
+                    end
+                end
+            end
+        end
+    end)
+    return fired
+end
+local function findUiText(patterns, exact)
+    local pg = lp:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    for _, d in ipairs(pg:GetDescendants()) do
+        if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" and d.Visible
+            and not d:IsDescendantOf(gui) and chainVisible(d, pg) then
+            local txt = trimLower(d.Text)
+            for _, pat in ipairs(patterns) do
+                local match
+                if exact then match = (txt == pat) else match = (string.find(txt, pat, 1, true) ~= nil) end
+                if match then
+                    local btn = d
+                    while btn and btn ~= pg and not (btn:IsA("TextButton") or btn:IsA("ImageButton")) do btn = btn.Parent end
+                    if btn == pg then btn = nil end
+                    return d, btn
+                end
+            end
+        end
+    end
+    return nil
+end
+function clickUi(patterns, exact)
+    local d, btn = findUiText(patterns, exact)
+    if not d then return false end
+    return activateGui(btn or d)
+end
+
 end
 
 --==================== QUESTS (level / bones / katakuri) ====================
@@ -897,9 +1526,7 @@ local function spawnsFor(mob)
     local function scan(k)
         local found = {}
         for _, p in ipairs(es:GetChildren()) do
-            if p:IsA("BasePart") and string.find(string.lower(p.Name), k, 1, true) then
-                table.insert(found, p)
-            end
+            if p:IsA("BasePart") and string.find(string.lower(p.Name), k, 1, true) then table.insert(found, p) end
         end
         return found
     end
@@ -913,20 +1540,28 @@ local function spawnsFor(mob)
     return out
 end
 
+local function isSubName(n) return string.find(string.lower(tostring(n)), "submerged", 1, true) ~= nil end
+
+-- escolhe a quest de maior level liberada para o seu level/mar (nao exige spawns carregados)
 local function chooseQuest(level, filter)
     local Q = loadQuests()
     if not Q then return nil, "modulo de quests nao carregou" end
+    detectSea()
     local cands = {}
     for qn, list in pairs(Q) do
         if type(list) == "table" then
             for idx, q in pairs(list) do
-                if type(q) == "table" and type(q.LevelReq) == "number" and q.LevelReq <= level
-                    and type(q.Task) == "table" then
+                if type(q) == "table" and type(q.LevelReq) == "number" and q.LevelReq <= level and type(q.Task) == "table" then
+                    local req = q.LevelReq
+                    local okSea = true
+                    if SEA == 1 and req >= 700 then okSea = false end
+                    if SEA == 2 and (req < 700 or req >= 1500) then okSea = false end
+                    if SEA == 3 and req < 1500 then okSea = false end
                     local mob, cnt
                     for m, c in pairs(q.Task) do mob, cnt = m, c end
-                    if mob and type(cnt) == "number" and cnt > 1 then
+                    if okSea and mob and type(cnt) == "number" and cnt > 1 then
                         if not filter or filter(norm(mob)) then
-                            table.insert(cands, {name = qn, idx = idx, req = q.LevelReq, mob = tostring(mob)})
+                            table.insert(cands, {name = qn, idx = idx, req = req, mob = tostring(mob)})
                         end
                     end
                 end
@@ -935,33 +1570,33 @@ local function chooseQuest(level, filter)
     end
     table.sort(cands, function(a, b) return a.req > b.req end)
     for _, c in ipairs(cands) do
-        if #spawnsFor(c.mob) > 0 then return c end
+        if #spawnsFor(c.mob) > 0 or (SEA == 3 and isSubName(c.name)) then return c end
     end
-    return nil, "nenhuma quest disponivel (level baixo ou area de outro mar)"
+    if #cands > 0 then return cands[1] end
+    return nil, "nenhuma quest para o seu level neste mar"
 end
 
-local function npcPart(n)
+local function npcPartOf(n)
     return n:FindFirstChild("HumanoidRootPart") or n.PrimaryPart or n:FindFirstChildWhichIsA("BasePart", true)
 end
-
-local function findQuestNPC(spawns)
-    if #spawns == 0 then return nil, nil end
-    local sum = Vector3.new(0, 0, 0)
-    for _, p in ipairs(spawns) do sum = sum + p.Position end
-    local center = sum / #spawns
+-- NPC da quest perto de um ponto (so NPCs ate 700 studs dali)
+local function findQuestNPC(center)
+    if not center then return nil end
     local en = workspace:FindFirstChild("Enemies")
     local best, bd
     local function consider(model)
         if not model:IsA("Model") then return end
         if en and model:IsDescendantOf(en) then return end
         if Players:GetPlayerFromCharacter(model) then return end
-        local part = npcPart(model)
+        local part = npcPartOf(model)
         if not part then return end
         local d = (part.Position - center).Magnitude
         if d > 700 then return end
         local score = d
         if model:FindFirstChild("QuestBBG", true) then score = score - 300 end
-        if string.find(string.lower(model.Name), "quest", 1, true) then score = score - 200 end
+        local ln = string.lower(model.Name)
+        if string.find(ln, "quest", 1, true) then score = score - 200 end
+        if string.find(ln, "submarine", 1, true) then score = score + 2000 end
         if not bd or score < bd then best, bd = part, score end
     end
     local npcs = workspace:FindFirstChild("NPCs")
@@ -969,9 +1604,7 @@ local function findQuestNPC(spawns)
         for _, n in ipairs(npcs:GetChildren()) do consider(n) end
     end
     if not best then
-        local ok, parts = pcall(function()
-            return workspace:GetPartBoundsInRadius(center, 500, OverlapParams.new())
-        end)
+        local ok, parts = pcall(function() return workspace:GetPartBoundsInRadius(center, 500, OverlapParams.new()) end)
         if ok and parts then
             local seen = {}
             for _, p in ipairs(parts) do
@@ -983,22 +1616,9 @@ local function findQuestNPC(spawns)
             end
         end
     end
-    return best, center
+    return best
 end
 
--- a quest aparece no HUD: procura o texto em TODA a PlayerGui
-local function mainGui()
-    local pg = lp:FindFirstChild("PlayerGui")
-    return pg and pg:FindFirstChild("Main")
-end
-local function chainVisible(o, stop)
-    local cur = o
-    while cur and cur ~= stop do
-        if cur:IsA("GuiObject") and not cur.Visible then return false end
-        cur = cur.Parent
-    end
-    return true
-end
 local function questFrameVisible()
     local m = mainGui()
     local qf = m and m:FindFirstChild("Quest")
@@ -1016,9 +1636,7 @@ local function questShows(mob)
     end
     return false
 end
-local function questActive(mob)
-    return questFrameVisible() or questShows(mob)
-end
+local function questActive(mob) return questFrameVisible() or questShows(mob) end
 
 local function mobsOf(name)
     local out = {}
@@ -1029,66 +1647,138 @@ local function mobsOf(name)
         if string.find(string.lower(e.Name), ln, 1, true) then
             local h = e:FindFirstChildOfClass("Humanoid")
             local p = e:FindFirstChild("HumanoidRootPart")
-            if h and p and h.Health > 0 then
-                table.insert(out, {m = e, h = h, p = p})
-            end
+            if h and p and h.Health > 0 then table.insert(out, {m = e, h = h, p = p}) end
         end
     end
     return out
 end
 
-local function goToQuestNPC(q, spawns, alive, setS)
-    local _, center = findQuestNPC(spawns)
-    if not center then return false end
-    for step = 1, 60 do
-        if not alive() then return false end
-        local r = root()
-        if not r then return false end
-        local npc = (findQuestNPC(spawns))
-        if npc then
-            setS("indo ao NPC da quest (" .. q.name .. ")")
-            moveTo(CFrame.new(npc.Position + Vector3.new(0, 3, 4)), Config.tweenSpeed, alive)
-            r = root()
-            if r and (r.Position - npc.Position).Magnitude < 25 then return true end
-        else
-            local d = (r.Position - center).Magnitude
-            setS("indo para a area do NPC (faltam " .. math.floor(d) .. " studs)")
-            if d < 60 then
-                task.wait(1.5)
-                if step > 8 then return false end
-            else
-                local dir = center - r.Position
-                local stepLen = math.min(dir.Magnitude, 700)
-                local target = r.Position + dir.Unit * stepLen
-                moveTo(CFrame.new(target.X, center.Y + 60, target.Z), Config.tweenSpeed, alive)
+-- Ilha Submersa: Tiki Outpost -> Submarine Worker -> viagem
+local function nearSubmerged()
+    local r = root()
+    if not r then return false end
+    local npcs = workspace:FindFirstChild("NPCs")
+    if npcs then
+        for _, m in ipairs(npcs:GetChildren()) do
+            if m:IsA("Model") and isSubName(m.Name) then
+                local p = npcPartOf(m)
+                if p and (p.Position - r.Position).Magnitude < 1500 then return true end
             end
         end
     end
     return false
 end
+local subFailUntil, subFailMsg = 0, ""
+local function enterSubmerged(alive, setS)
+    if nearSubmerged() then return true end
+    if os.clock() < subFailUntil then
+        setS(subFailMsg)
+        task.wait(2)
+        return false
+    end
+    local npc = approachNPC({"submarineworker"}, {"tiki"}, alive, setS, "o Submarine Worker")
+    if not npc then
+        subFailUntil, subFailMsg = os.clock() + 15, "nao achei o Submarine Worker (Sub Port, Tiki Outpost)"
+        return false
+    end
+    setS("falando com o Submarine Worker...")
+    local r = root()
+    local before = r and r.Position
+    local function moved()
+        local rr = root()
+        return rr ~= nil and before ~= nil and (rr.Position - before).Magnitude > 1500
+    end
+    local rf = getNet("RF/SubmarineWorkerSpeak")
+    if rf then pcall(function() rf:InvokeServer("TravelToSubmergedIsland") end) end
+    task.wait(2.5)
+    if moved() then return true end
+    invoke("SubmarineWorkerSpeak", "TravelToSubmergedIsland")
+    task.wait(2.5)
+    if moved() then return true end
+    local model = npc:FindFirstAncestorOfClass("Model")
+    for _ = 1, 3 do
+        firePrompts(model)
+        task.wait(1)
+        clickUi({"yes", "sim"}, true)
+        task.wait(1)
+        clickUi({"yes", "sim"}, true)
+        task.wait(2.5)
+        if moved() then return true end
+    end
+    subFailUntil, subFailMsg = os.clock() + 20, "nao consegui entrar na ilha (precisa ter derrotado o Tyrant of the Skies)"
+    setS(subFailMsg)
+    return false
+end
 
--- sai do NPC, vai ao spawn, junta os mobs num ponto e mata rapido (sem girar o personagem)
-local function killQuestMobs(q, spawns, lvl, alive, setS)
+-- puxa os mobs ate o ponto alvo (precisa de sethiddenproperty)
+local simSet = false
+local canBring = (sethiddenproperty ~= nil)
+local function bringMobs(name, anchor)
+    if not simSet then
+        simSet = true
+        pcall(function() sethiddenproperty(lp, "SimulationRadius", math.huge) end)
+        pcall(function() lp.MaximumSimulationRadius = math.huge end)
+    end
+    local list = mobsOf(name)
+    local n = 0
+    for _, e in ipairs(list) do
+        if n >= Config.bringCount then break end
+        if (e.p.Position - anchor).Magnitude <= Config.bringRadius then
+            n = n + 1
+            pcall(function()
+                e.h.WalkSpeed = 0
+                e.p.CanCollide = false
+                e.p.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                e.p.CFrame = CFrame.new(anchor)
+            end)
+        end
+    end
+    return n
+end
+
+local function flyStaged(pos, alive, up)
+    local r = root()
+    if not r then return false end
+    local dir = pos - r.Position
+    local stepLen = math.min(dir.Magnitude, 700)
+    local tgt = r.Position + dir.Unit * stepLen
+    return moveTo(CFrame.new(tgt.X, (dir.Magnitude > 700) and (pos.Y + (up or 60)) or pos.Y, tgt.Z), Config.tweenSpeed, alive)
+end
+
+-- mata os mobs da quest: junta todos num ponto e ataca rapido
+local function killQuestMobs(q, st, spec, lvl, alive, setS)
     local r = root()
     if not r then return end
     local list = mobsOf(q.mob)
-    local fresh = spawnsFor(q.mob)
-    if #fresh > 0 then spawns = fresh end
-
     if #list == 0 then
-        if #spawns == 0 then
+        if isSubName(q.name) and not nearSubmerged() then
+            if enterSubmerged(alive, setS) then task.wait(2) end
+            return
+        end
+        local spawns = spawnsFor(q.mob)
+        local target
+        if #spawns > 0 then
+            local sd
+            for _, p in ipairs(spawns) do
+                local d = (p.Position - r.Position).Magnitude
+                if not sd or d < sd then target, sd = p.Position, d end
+            end
+        elseif spec.loc then
+            for _, k in ipairs(spec.loc) do target = target or locationPos(k) end
+        end
+        if not target then
             setS("nenhum spawn de " .. q.mob .. " encontrado neste mar")
             task.wait(2)
             return
         end
-        local sp, sd
-        for _, p in ipairs(spawns) do
-            local d = (p.Position - r.Position).Magnitude
-            if not sd or d < sd then sp, sd = p, d end
+        local d = (target - r.Position).Magnitude
+        setS("indo ate " .. q.mob .. " (" .. math.floor(d) .. " studs)")
+        if d > 800 then
+            flyStaged(target, alive, 60)
+        else
+            moveTo(CFrame.new(hoverPos(target, 12)), Config.tweenSpeed, alive)
         end
-        setS("indo ao spawn de " .. q.mob .. " (" .. math.floor(sd) .. " studs)")
-        moveTo(CFrame.new(sp.Position + Vector3.new(0, Config.height + 10, 0)), Config.tweenSpeed, alive)
-        task.wait(1)
+        task.wait(0.6)
         return
     end
 
@@ -1098,104 +1788,128 @@ local function killQuestMobs(q, spawns, lvl, alive, setS)
         if not nd or d < nd then near, nd = e, d end
     end
     local anchor = near.p.Position
+    local bringOn = Config.bring and canBring
+    equipWeapon()
     if nd > 40 then
         setS("indo ate " .. q.mob)
-        moveTo(CFrame.new(anchor + Vector3.new(0, Config.height, 0)), Config.tweenSpeed, alive)
+        moveTo(CFrame.new(hoverPos(anchor, farmHover())), Config.tweenSpeed, alive)
     end
-
-    equipWeapon()
-    pcall(function() sethiddenproperty(lp, "SimulationRadius", math.huge) end)
     local t0 = os.clock()
     while alive() and os.clock() - t0 < 25 do
         local cur = mobsOf(q.mob)
         if #cur == 0 then break end
-        local n = 0
-        for _, e in ipairs(cur) do
-            if (e.p.Position - anchor).Magnitude < 300 then
-                n = n + 1
-                if Config.bring then
-                    pcall(function()
-                        e.h.WalkSpeed = 0
-                        e.p.CanCollide = false
-                        e.p.CFrame = CFrame.new(anchor)
-                    end)
-                end
+        local main_ = cur[1]
+        if bringOn then
+            bringMobs(q.mob, anchor)
+        else
+            local rr = root()
+            local bd
+            for _, e in ipairs(cur) do
+                local d = rr and (e.p.Position - rr.Position).Magnitude or 0
+                if not bd or d < bd then main_, bd = e, d end
             end
+            anchor = main_.p.Position
         end
-        setS("Lv " .. lvl .. " | matando " .. n .. "x " .. q.mob)
-        if not placeAt(anchor + Vector3.new(0, Config.height, 0), anchor) then break end
-        doAttack()
-        task.wait()
+        setS("Lv " .. lvl .. " | " .. #cur .. "x " .. q.mob .. " | " .. atkInfo())
+        if not placeAt(hoverPos(anchor, farmHover()), anchor) then break end
+        attackNow()
+        watchDamage(main_.h)
+        task.wait(Config.atkDelay)
     end
 end
 
--- farm por quest (usado por Level, Bones e Katakuri)
-local function questFarm(key, myGen, spec)
-    local function alive() return active[key] and gens[key] == myGen end
-    local function setS(t) setSt(key, t) end
-    local lastLevel, q, spawns, abandoned, assumeUntil = -1, nil, {}, false, 0
-    while alive() do
-        local ok, err = pcall(function()
-            if spec.pre and spec.pre(alive, setS) then return end
-            local lvl = getLevel()
-            if lvl ~= lastLevel or not q then
-                lastLevel = lvl
-                local reason
-                q, reason = chooseQuest(lvl, spec.filter)
-                abandoned = false
-                spawns = q and spawnsFor(q.mob) or {}
-                if not q then
-                    setS("sem quest: " .. tostring(reason))
-                    task.wait(3)
-                    return
-                end
+local QS = {}
+-- um "passo" do farm por quest (o agendador chama em loop)
+local function questStep(key, spec, alive, setS)
+    local st = QS[key]
+    if not st then
+        st = {lastLevel = -1, assumeUntil = 0, abandoned = false}
+        QS[key] = st
+    end
+    if spec.pre and spec.pre(alive, setS) then return end
+    local lvl = getLevel()
+    if lvl ~= st.lastLevel or not st.q then
+        st.lastLevel = lvl
+        local reason
+        st.q, reason = chooseQuest(lvl, spec.filter)
+        st.abandoned = false
+        if not st.q then
+            setS("sem quest: " .. tostring(reason))
+            task.wait(3)
+            return
+        end
+    end
+    local q = st.q
+
+    if spec.useQuest then
+        if questFrameVisible() and not st.abandoned and not questShows(q.mob) then
+            st.abandoned = true
+            setS("abandonando quest diferente")
+            invoke("AbandonQuest")
+            task.wait(0.8)
+        end
+        if not (questActive(q.mob) or os.clock() < st.assumeUntil) then
+            if isSubName(q.name) and not nearSubmerged() then
+                if not enterSubmerged(alive, setS) then task.wait(2) return end
+                task.wait(2)
             end
-
-            if spec.useQuest then
-                if questFrameVisible() and not abandoned and not questShows(q.mob) then
-                    abandoned = true
-                    setS("abandonando quest diferente")
-                    local rem = getRem()
-                    if rem then pcall(function() rem:InvokeServer("AbandonQuest") end) end
-                    task.wait(0.8)
-                end
-
-                if not (questActive(q.mob) or os.clock() < assumeUntil) then
-                    local arrived = goToQuestNPC(q, spawns, alive, setS)
-                    if not alive() then return end
-                    if not arrived then
-                        setS("nao consegui chegar no NPC da quest, tentando de novo")
+            local spawns = spawnsFor(q.mob)
+            local center
+            if #spawns > 0 then
+                local sum = Vector3.new(0, 0, 0)
+                for _, p in ipairs(spawns) do sum = sum + p.Position end
+                center = sum / #spawns
+            elseif spec.loc then
+                for _, k in ipairs(spec.loc) do center = center or locationPos(k) end
+            end
+            local arrived = false
+            for step = 1, 40 do
+                if not alive() then return end
+                local r = root()
+                if not r or not center then break end
+                local npc = findQuestNPC(center)
+                if npc then
+                    setS("indo ao NPC da quest (" .. q.name .. ")")
+                    moveTo(CFrame.new(npc.Position + Vector3.new(0, 3, 4)), Config.tweenSpeed, alive)
+                    r = root()
+                    if r and (r.Position - npc.Position).Magnitude < 25 then arrived = true break end
+                else
+                    local d = (r.Position - center).Magnitude
+                    setS("indo para a area do NPC (faltam " .. math.floor(d) .. " studs)")
+                    if d < 60 then
                         task.wait(1.5)
-                        return
-                    end
-                    task.wait(0.5)
-                    local rem = getRem()
-                    if rem then pcall(function() rem:InvokeServer("StartQuest", q.name, q.idx) end) end
-                    for _ = 1, 6 do
-                        task.wait(0.5)
-                        if questActive(q.mob) then break end
-                    end
-                    if not questActive(q.mob) then
-                        setS("quest enviada, mas nao detectei na tela; seguindo por 60s")
-                        assumeUntil = os.clock() + 60
+                        if step > 8 then break end
+                    elseif d > 1500 and not isSubName(q.name) then
+                        flyStaged(center, alive, 60)
+                    else
+                        moveTo(CFrame.new(center.X, center.Y + 4, center.Z), Config.tweenSpeed, alive)
+                        task.wait(1)
                     end
                 end
             end
             if not alive() then return end
-
-            killQuestMobs(q, spawns, lvl, alive, setS)
-        end)
-        if not ok then
-            setS("erro: " .. tostring(err))
-            task.wait(2)
+            if not arrived then
+                setS("nao cheguei no NPC; tentando pegar a quest mesmo assim e seguindo para os mobs")
+            end
+            task.wait(0.5)
+            invoke("StartQuest", q.name, q.idx)
+            for _ = 1, 6 do
+                task.wait(0.5)
+                if questActive(q.mob) then break end
+            end
+            if not questActive(q.mob) then
+                setS("quest enviada, mas nao detectei na tela; seguindo por 60s")
+                st.assumeUntil = os.clock() + 60
+            end
         end
-        task.wait(0.2)
     end
-    if gens[key] == myGen then setS("desligado") end
+    if not alive() then return end
+    killQuestMobs(q, st, spec, lvl, alive, setS)
 end
 
-local BONES_MOBS = {rebornskeleton = true, livingzombie = true, demonicsoul = true,
-    posessedmummy = true, possessedmummy = true}
+local alwaysTrue
+do
+local BONES_MOBS = {rebornskeleton = true, livingzombie = true, demonicsoul = true, posessedmummy = true, possessedmummy = true}
 local CAKE_MOBS = {cookiecrafter = true, cakeguard = true, bakingstaff = true, headbaker = true}
 
 local lastSpawnTry = 0
@@ -1210,138 +1924,104 @@ local function cakeBossStep(alive, setS)
     end
     if os.clock() - lastSpawnTry > 25 then
         lastSpawnTry = os.clock()
-        local rem = getRem()
-        if rem then
-            pcall(function() rem:InvokeServer("CakePrinceSpawner") end)
-            pcall(function() rem:InvokeServer("CakePrinceSpawner", true) end)
+        invoke("CakePrinceSpawner")
+        invoke("CakePrinceSpawner", true)
+    end
+    return false
+end
+
+alwaysTrue = function() return true end
+regFeature("farm", 60, alwaysTrue, function(alive, setS)
+    questStep("farm", {useQuest = true}, alive, setS)
+end)
+regFeature("bones", 60, alwaysTrue, function(alive, setS)
+    questStep("bones", {useQuest = true, loc = {"haunted"}, filter = function(n) return BONES_MOBS[n] == true end}, alive, setS)
+end)
+regFeature("cake", 60, alwaysTrue, function(alive, setS)
+    questStep("cake", {useQuest = false, loc = {"cakeland", "cake"}, pre = cakeBossStep,
+        filter = function(n) return CAKE_MOBS[n] == true end}, alive, setS)
+end)
+regFeature("cakeQuest", 60, alwaysTrue, function(alive, setS)
+    questStep("cakeQuest", {useQuest = true, loc = {"cakeland", "cake"},
+        filter = function(n) return CAKE_MOBS[n] == true end}, alive, setS)
+end)
+
+end
+
+--==================== BOSSES (Multi Farm) ====================
+-- boss no mapa -> ataca; boss "estacionado" no ReplicatedStorage -> voa ate ele e espera
+local function bossStep(names, label, alive, setS)
+    local list = targetsByNames(names, {"Enemies"})
+    if #list > 0 then
+        local best, bd = nearestOf(list)
+        setS(label .. " encontrado (" .. math.floor(bd or 0) .. "m) | " .. atkInfo())
+        engage(best, alive, Config.bossHeight, Config.bossSkills, Config.tweenSpeed, 40)
+        return true
+    end
+    for _, m in ipairs(RepS:GetChildren()) do
+        if m:IsA("Model") then
+            local n = norm(m.Name)
+            for _, pat in ipairs(names) do
+                if string.find(n, pat, 1, true) then
+                    local part = partOf(m)
+                    if part and part.Position.Magnitude > 100 then
+                        local r = root()
+                        local d = r and (r.Position - part.Position).Magnitude or 0
+                        if d > 150 then
+                            setS("indo ate " .. m.Name .. " (" .. math.floor(d) .. " studs)")
+                            flyStaged(part.Position + Vector3.new(0, 60, 0), alive, 60)
+                        else
+                            setS("perto de " .. m.Name .. ", aguardando ele aparecer...")
+                            task.wait(1.5)
+                        end
+                        return true
+                    end
+                end
+            end
         end
     end
     return false
 end
 
-local function farmLevelLoop(g) questFarm("farm", g, {useQuest = true}) end
-local function bonesLoop(g)
-    questFarm("bones", g, {useQuest = true, filter = function(n) return BONES_MOBS[n] == true end})
-end
-local function cakeLoop(g)
-    questFarm("cake", g, {
-        useQuest = false, filter = function(n) return CAKE_MOBS[n] == true end, pre = cakeBossStep,
-    })
-end
-local function cakeQuestLoop(g)
-    questFarm("cakeQuest", g, {useQuest = true, filter = function(n) return CAKE_MOBS[n] == true end})
-end
-
---==================== CHEST ====================
-local function partOf(v)
-    if v:IsA("BasePart") then return v end
-    if v:IsA("Model") then return v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart", true) end
-    return nil
-end
-local chestNames = {Chest1 = "Bau", Chest2 = "Bau de Prata", Chest3 = "Bau de Ouro"}
-local deepT, deepCache = 0, {}
-
-local function chestList()
-    local out, seen = {}, {}
-    local function add(v)
-        if seen[v] or not v.Parent then return end
-        local part = partOf(v)
-        if not part then return end
-        seen[v] = true
-        table.insert(out, {obj = v, part = part, name = chestNames[v.Name] or "Bau"})
+-- Elite Hunter: vai ao Castle on the Sea, fala com o NPC, pega a quest e vai ate o boss
+local lastEliteAsk = 0
+regFeature("elite", 55, alwaysTrue, function(alive, setS)
+    detectSea()
+    if SEA ~= 3 then setS("Elite Hunter so existe no Sea 3") task.wait(2) return end
+    if bossStep({"diablo", "urban", "deandre"}, "Elite", alive, setS) then return end
+    if os.clock() - lastEliteAsk < 12 then
+        setS("aguardando o elite spawnar...")
+        task.wait(1.5)
+        return
     end
-    pcall(function()
-        for _, v in ipairs(CS:GetTagged("_ChestTagged")) do add(v) end
+    local npc = approachNPC({"elitehunter"}, {"castleonthesea", "castle"}, alive, setS, "o Elite Hunter")
+    if not npc or not alive() then return end
+    setS("falando com o Elite Hunter...")
+    lastEliteAsk = os.clock()
+    invoke("EliteHunter")
+    firePrompts(npc:FindFirstAncestorOfClass("Model"))
+    task.wait(1.5)
+    clickUi({"yes", "sim", "accept", "aceitar"}, true)
+    task.wait(2.5)
+end)
+
+local function bossFeature(key, names, label)
+    regFeature(key, 20, function() return #targetsByNames(names, {"Enemies"}) > 0 end, function(alive, setS)
+        local list = targetsByNames(names, {"Enemies"})
+        if #list == 0 then return end
+        local best, bd = nearestOf(list)
+        setS(label .. " (" .. math.floor(bd or 0) .. "m) | " .. atkInfo())
+        engage(best, alive, Config.bossHeight, Config.bossSkills, Config.tweenSpeed, 40)
     end)
-    for _, v in ipairs(workspace:GetChildren()) do
-        if (v:IsA("Model") or v:IsA("BasePart")) and string.find(v.Name, "Chest") then add(v) end
-    end
-    local cm = workspace:FindFirstChild("ChestModels")
-    if cm then
-        for _, v in ipairs(cm:GetChildren()) do add(v) end
-    end
-    if #out == 0 and os.clock() - deepT > 6 then
-        deepT = os.clock()
-        deepCache = {}
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if (v:IsA("Model") or v:IsA("BasePart")) and string.match(v.Name, "^Chest%d*$") then
-                table.insert(deepCache, v)
-            end
-        end
-    end
-    if #out == 0 then
-        for _, v in ipairs(deepCache) do add(v) end
-    end
-    return out
 end
+bossFeature("killIndra", {"ripindra"}, "Rip Indra")
+bossFeature("killReaper", {"soulreaper"}, "Soul Reaper")
+bossFeature("killBeard", {"darkbeard"}, "Barba Negra")
 
-local function touchChest(obj, part)
-    local r = root()
-    if not (r and firetouchinterest) then return end
-    local parts = {part}
-    if obj:IsA("Model") then
-        for _, d in ipairs(obj:GetDescendants()) do
-            if d:IsA("BasePart") and d ~= part then
-                table.insert(parts, d)
-                if #parts >= 6 then break end
-            end
-        end
-    end
-    for _, p in ipairs(parts) do
-        pcall(function()
-            firetouchinterest(r, p, 0)
-            task.wait(0.03)
-            firetouchinterest(r, p, 1)
-        end)
-    end
-end
-
-local function chestLoop(myGen)
-    local function alive() return active.chest and gens.chest == myGen end
-    local function setS(t) setSt("chest", t) end
-    local skipped = {}
-    while alive() do
-        pcall(function()
-            local r = root()
-            if not r then setS("aguardando personagem") return end
-            local best, bd, total = nil, nil, 0
-            for _, c in ipairs(chestList()) do
-                total = total + 1
-                local u = skipped[c.obj]
-                if not (u and u > os.clock()) then
-                    local d = (c.part.Position - r.Position).Magnitude
-                    if not bd or d < bd then best, bd = c, d end
-                end
-            end
-            if not best then
-                setS(total == 0 and "nenhum bau carregado por perto, procurando..."
-                    or "baus encontrados, mas todos ignorados por enquanto")
-                task.wait(2)
-                return
-            end
-            setS("indo ate " .. best.name .. " (" .. math.floor(bd) .. "m)")
-            if moveTo(CFrame.new(best.part.Position + Vector3.new(0, 2, 0)), Config.chestSpeed, alive) then
-                setS("pegando " .. best.name)
-                local t0 = os.clock()
-                while alive() and best.obj.Parent and os.clock() - t0 < 2.5 do
-                    local rr = root()
-                    if rr and best.part.Parent then
-                        rr.CFrame = best.part.CFrame
-                        touchChest(best.obj, best.part)
-                    end
-                    task.wait(0.25)
-                end
-                task.wait(0.6)
-            end
-            if best.obj.Parent then skipped[best.obj] = os.clock() + 30 end
-        end)
-        task.wait(0.3)
-    end
-    if gens.chest == myGen then setS("desligado") end
-end
-
---==================== STACK FARMING: acoes ====================
-local function findTool(subs)
+-- invocar bosses / pads (uma vez e desliga)
+local findTool, equipTool
+do
+function findTool(subs)
     for _, cont in ipairs({lp.Character, lp.Backpack}) do
         if cont then
             for _, t in ipairs(cont:GetChildren()) do
@@ -1356,19 +2036,14 @@ local function findTool(subs)
     end
     return nil
 end
-local function equipTool(t)
+function equipTool(t)
     local h = hum()
     if h and t then pcall(function() h:EquipTool(t) end) end
 end
-
--- aciona prompts / click detectors / pads (touch) perto de um ponto
 local function interactNear(center, radius, patterns)
-    local ok, parts = pcall(function()
-        return workspace:GetPartBoundsInRadius(center, radius, OverlapParams.new())
-    end)
+    local ok, parts = pcall(function() return workspace:GetPartBoundsInRadius(center, radius, OverlapParams.new()) end)
     if not ok or not parts then return 0 end
-    local count = 0
-    local seen = {}
+    local count, seen = 0, {}
     local r = root()
     local function nameMatch(p)
         if not patterns then return true end
@@ -1404,145 +2079,65 @@ local function interactNear(center, radius, patterns)
     end
     return count
 end
-
-local function runOnce(key, fn)
-    return function(myGen)
-        local function alive() return active[key] and gens[key] == myGen end
-        local function setS(t) setSt(key, t) end
-        local ok, err = pcall(fn, alive, setS)
-        if not ok then setS("erro: " .. tostring(err)) end
-        task.defer(function()
-            if gens[key] == myGen and features[key] then features[key].set(false) end
-        end)
-    end
+local function summonFeature(key, o)
+    regFeature(key, 30, function() return Config[key] end, function(alive, setS)
+        detectSea()
+        if o.sea and SEA ~= o.sea then setS("so funciona no Sea " .. o.sea) uiSet(key, false) return end
+        local item = findTool(o.item)
+        if not item then setS("voce nao tem o item: " .. o.itemName) uiSet(key, false) return end
+        local pos
+        for _, sub in ipairs(o.loc) do pos = pos or locationPos(sub) end
+        if not pos then setS("nao achei " .. o.place .. " na lista de ilhas") uiSet(key, false) return end
+        setS("indo para " .. o.place .. "...")
+        if not moveTo(CFrame.new(pos + Vector3.new(0, 70, 0)), Config.tpSpeed, alive) then return end
+        task.wait(1)
+        equipTool(item)
+        task.wait(0.5)
+        local n = interactNear(pos, o.radius or 400, o.patterns)
+        setS(n > 0 and ("acionei " .. n .. " objeto(s). Se o boss nao apareceu: " .. o.hint) or ("nao achei o local de invocar. " .. o.hint))
+        uiSet(key, false)
+    end)
 end
-
-local function summonGeneric(alive, setS, o)
+summonFeature("sumIndra", {sea = 3, item = {"godschalice"}, itemName = "God's Chalice", loc = {"castleonthesea", "castle"},
+    place = "o Castle on the Sea", patterns = {"pedestal", "chalice", "summon", "altar", "indra"},
+    hint = "confira se os 3 botoes de Aura estao ativos."})
+summonFeature("sumReaper", {sea = 3, item = {"hallowessence"}, itemName = "Hallow Essence", loc = {"hauntedcastle", "haunted"},
+    place = "o Haunted Castle", patterns = {"altar", "summon", "hallow", "pedestal"}, hint = "o altar fica perto do mausoleu."})
+summonFeature("sumBeard", {sea = 2, item = {"fistofdarkness"}, itemName = "Fist of Darkness", loc = {"darkarena", "dark"},
+    place = "a Dark Arena", patterns = {"pedestal", "altar", "summon", "fist"}, hint = "o pedestal fica no meio da arena."})
+regFeature("pads", 30, function() return Config.pads end, function(alive, setS)
     detectSea()
-    if o.sea and SEA ~= o.sea then setS("so funciona no Sea " .. o.sea .. " (voce esta no Sea " .. tostring(SEA) .. ")") return end
-    local item = findTool(o.item)
-    if not item then setS("voce nao tem o item: " .. o.itemName) return end
-    local pos = nil
-    for _, sub in ipairs(o.loc) do
-        pos = pos or locationPos(sub)
-    end
-    if not pos then setS("nao achei " .. o.place .. " na lista de ilhas deste mar") return end
-    setS("indo para " .. o.place .. "...")
-    if not moveTo(CFrame.new(pos + Vector3.new(0, 70, 0)), Config.tpSpeed, alive) then return end
-    task.wait(1)
-    equipTool(item)
-    task.wait(0.5)
-    local n = interactNear(pos, o.radius or 400, o.patterns)
-    if n > 0 then
-        setS("acionei " .. n .. " objeto(s). Se o boss nao apareceu, " .. o.hint)
-    else
-        setS("nao achei o local de invocar por perto. " .. o.hint)
-    end
-end
-
-local function summonIndra(alive, setS)
-    summonGeneric(alive, setS, {
-        sea = 3, item = {"godschalice"}, itemName = "God's Chalice", loc = {"castleonthesea", "castle"},
-        place = "o Castle on the Sea", patterns = {"pedestal", "chalice", "summon", "altar", "indra"},
-        hint = "confira se os 3 botoes de Aura estao ativos.",
-    })
-end
-local function summonReaper(alive, setS)
-    summonGeneric(alive, setS, {
-        sea = 3, item = {"hallowessence"}, itemName = "Hallow Essence", loc = {"hauntedcastle", "haunted"},
-        place = "o Haunted Castle", patterns = {"altar", "summon", "hallow", "pedestal"},
-        hint = "o altar fica perto do mausoleu, no cemiterio.",
-    })
-end
-local function summonBeard(alive, setS)
-    summonGeneric(alive, setS, {
-        sea = 2, item = {"fistofdarkness"}, itemName = "Fist of Darkness", loc = {"darkarena", "dark"},
-        place = "a Dark Arena", patterns = {"pedestal", "altar", "summon", "fist"},
-        hint = "o pedestal fica no meio da arena.",
-    })
-end
-local function touchPads(alive, setS)
-    detectSea()
-    if SEA ~= 3 then setS("so funciona no Sea 3") return end
+    if SEA ~= 3 then setS("so funciona no Sea 3") uiSet("pads", false) return end
     local pos = locationPos("castleonthesea") or locationPos("castle")
-    if not pos then setS("nao achei o Castle on the Sea na lista de ilhas") return end
+    if not pos then setS("nao achei o Castle on the Sea") uiSet("pads", false) return end
     setS("indo ao Castle on the Sea...")
     if not moveTo(CFrame.new(pos + Vector3.new(0, 70, 0)), Config.tpSpeed, alive) then return end
     task.wait(1)
     local n = interactNear(pos, 600, {"pad", "button", "haki", "aura", "plate"})
-    setS("toquei em " .. n .. " pad(s). Cada pad precisa da cor de Aura correta equipada.")
+    setS("toquei em " .. n .. " pad(s). Cada pad precisa da cor de Aura correta.")
+    uiSet("pads", false)
+end)
+
 end
 
-local ELITE_NAMES = {"Diablo", "Urban", "Deandre"}
-local function eliteIdle(alive, setS)
-    -- o elite so entra no mapa quando voce chega perto: antes disso ele fica no ReplicatedStorage
-    local rsElite
-    for _, n in ipairs(ELITE_NAMES) do
-        local m = RepS:FindFirstChild(n)
-        if m then
-            rsElite = m
-            break
-        end
+regFeature("hopBeard", 65, alwaysTrue, function(alive, setS)
+    if bossStep({"darkbeard"}, "Barba Negra", alive, setS) then return end
+    for i = Config.hopDelay, 1, -1 do
+        if not alive() then return end
+        if #targetsByNames({"darkbeard"}, {"Enemies"}) > 0 then return end
+        setS("Barba Negra nao esta aqui, trocando de servidor em " .. i .. "s")
+        task.wait(1)
     end
-    if rsElite then
-        local part = partOfModel(rsElite)
-        if part then
-            local pos = part.Position
-            local r = root()
-            local d = r and (r.Position - pos).Magnitude or 0
-            if d > 150 then
-                setS("indo ate " .. rsElite.Name .. " (" .. math.floor(d) .. " studs)")
-                moveTo(CFrame.new(pos + Vector3.new(0, 60, 0)), Config.tweenSpeed, alive)
-                return
-            end
-            setS("perto de " .. rsElite.Name .. ", aguardando ele aparecer...")
-            task.wait(1.5)
-            return
-        end
-    end
-    -- nenhum elite ativo: pede a quest
-    local rem = getRem()
-    if rem then
-        setS("pedindo a quest do Elite Hunter...")
-        pcall(function() rem:InvokeServer("EliteHunter") end)
-    end
-    task.wait(4)
-    if alive() then
-        setS("aguardando o elite spawnar...")
-        task.wait(2)
-    end
-end
-
-local function hopBeardLoop(myGen)
-    local function alive() return active.hopBeard and gens.hopBeard == myGen end
-    local function setS(t) setSt("hopBeard", t) end
-    while alive() do
-        pcall(function()
-            local list = targetsByNames({"darkbeard"}, {"Enemies"})
-            if #list > 0 then
-                local best = nearestOf(list)
-                setS("Barba Negra encontrado! atacando...")
-                engage(best, alive, Config.bossHeight, Config.bossSkills, Config.tweenSpeed, 40)
-                return
-            end
-            for i = Config.hopDelay, 1, -1 do
-                if not alive() then return end
-                if #targetsByNames({"darkbeard"}, {"Enemies"}) > 0 then return end
-                setS("Barba Negra nao esta aqui, trocando de servidor em " .. i .. "s")
-                task.wait(1)
-            end
-            if alive() then serverHop(setS) end
-            task.wait(10)
-        end)
-        task.wait(0.3)
-    end
-    if gens.hopBeard == myGen then setS("desligado") end
-end
+    if alive() then serverHop(function(t) setS(t) end) end
+    task.wait(10)
+end)
 
 --==================== SEA EVENTS ====================
-local SEA_EVENTS = {
+local SEA_EVENTS
+do
+SEA_EVENTS = {
     {key = "sLev", label = "Kill Leviathan", names = {"leviathan"}},
-    {key = "sLevSeg", label = "Kill Leviathan (multi segmentos)", names = {"leviathan"}, segments = true},
+    {key = "sLevSeg", label = "Kill Leviathan (segmentos)", names = {"leviathan"}, segments = true},
     {key = "sBeast", label = "Kill Sea Beast", names = {"seabeast"}},
     {key = "sShark", label = "Kill Terrorshark", names = {"terrorshark"}},
     {key = "sPiranha", label = "Kill Piranha", names = {"piranha"}},
@@ -1550,48 +2145,64 @@ local SEA_EVENTS = {
     {key = "sGhost", label = "Kill Haunted Shipwreck (Ghost Ship)",
         names = {"hauntedcrew", "ghostshark", "shipdeckhand", "shipengineer", "shipsteward", "shipofficer", "cursedcaptain"}},
 }
-local seaOn = {}
-local function seaLoop(myGen)
-    local function alive() return active.sea and gens.sea == myGen end
-    local function setS(t) setSt("sea", t) end
-    while alive() do
-        pcall(function()
-            local list = {}
-            for _, ev in ipairs(SEA_EVENTS) do
-                if seaOn[ev.key] then
-                    local found
-                    if ev.segments then found = leviathanTargets() else found = targetsByNames(ev.names) end
-                    for _, t in ipairs(found) do
-                        t.ev = ev.label
-                        table.insert(list, t)
+local function leviathanTargets()
+    local all = targetsByNames({"leviathan"}, {"SeaBeasts"})
+    local segs = {}
+    for _, t in ipairs(all) do
+        if string.find(norm(t.mdl.Name), "segment", 1, true) then table.insert(segs, t) end
+    end
+    if #segs == 0 then
+        local f = workspace:FindFirstChild("SeaBeasts")
+        if f then
+            for _, m in ipairs(f:GetChildren()) do
+                if string.find(norm(m.Name), "leviathan", 1, true) then
+                    for _, d in ipairs(m:GetDescendants()) do
+                        if (d:IsA("Model") or d:IsA("BasePart")) and string.find(norm(d.Name), "segment", 1, true) then
+                            local part = partOf(d)
+                            local h = d:FindFirstChildOfClass("Humanoid")
+                            if part and (not h or h.Health > 0) then table.insert(segs, {mdl = d, part = part, hum = h}) end
+                        end
                     end
                 end
             end
-            if #list == 0 then
-                setS("aguardando o evento aparecer...")
-                task.wait(1.5)
-                return
-            end
-            local best, bd = nearestOf(list)
-            setS(best.ev .. " (" .. math.floor(bd or 0) .. "m)")
-            engage(best, alive, Config.seaHeight, Config.seaSkills, Config.seaSpeed, 30)
-        end)
-        task.wait(0.2)
+        end
     end
-    if gens.sea == myGen then setS("desligado") end
+    if #segs > 0 then return segs end
+    return all
 end
-local function refreshSea()
-    local any = false
-    for _, v in pairs(seaOn) do
-        if v then any = true end
+local function seaTargets()
+    local list = {}
+    for _, ev in ipairs(SEA_EVENTS) do
+        if Config[ev.key] then
+            local found
+            if ev.segments then found = leviathanTargets() else found = targetsByNames(ev.names) end
+            for _, t in ipairs(found) do
+                t.ev = ev.label
+                table.insert(list, t)
+            end
+        end
     end
-    active.sea = any
-    gens.sea = (gens.sea or 0) + 1
-    if any then task.spawn(seaLoop, gens.sea) else setSt("sea", "desligado") end
+    return list
+end
+regFeature("sea", 25, function() return #seaTargets() > 0 end, function(alive, setS)
+    local list = seaTargets()
+    if #list == 0 then return end
+    local best, bd = nearestOf(list)
+    setS(best.ev .. " (" .. math.floor(bd or 0) .. "m) | " .. atkInfo())
+    engage(best, alive, Config.seaHeight, Config.seaSkills, Config.seaSpeed, 30)
+end, function()
+    for _, ev in ipairs(SEA_EVENTS) do
+        if Config[ev.key] then return true end
+    end
+    return false
+end)
+
 end
 
 --==================== FRUIT ====================
-local function key(s)
+local fkey, fruitList, touch, ownedLabel, captureBase, refreshOwned, fruitTools, toolName
+do
+function fkey(s)
     s = tostring(s)
     local first = string.match(s, "^([^%-]+)%-") or s
     local r = string.lower(first)
@@ -1600,7 +2211,6 @@ local function key(s)
     if #r < 2 then r = string.gsub(string.lower(s), "[^a-z]", "") end
     return r
 end
-
 local function fruitName(v)
     local n = v:GetAttribute("OriginalName") or v:GetAttribute("FruitName") or v.Name
     n = tostring(n)
@@ -1616,8 +2226,7 @@ local function fruitName(v)
     end
     return n
 end
-
-local function fruitList()
+function fruitList()
     local out = {}
     for _, v in ipairs(workspace:GetChildren()) do
         if (v:IsA("Tool") or v:IsA("Model")) and string.find(v.Name, "Fruit") then
@@ -1627,8 +2236,7 @@ local function fruitList()
     end
     return out
 end
-
-local function touch(part)
+function touch(part)
     local r = root()
     if r and firetouchinterest then
         pcall(function()
@@ -1639,18 +2247,17 @@ local function touch(part)
     end
 end
 
-local ownedInv, ownedBase, skippedF, storeTries = {}, {}, {}, {}
-local ownedLabel = nil
+local FR = {inv = {}, base = {}, skipped = {}, tries = {}, inited = false, lastRefresh = 0, noneSince = nil}
 local function isOwned(name)
-    local k = key(name)
-    return ownedInv[k] ~= nil or ownedBase[k] ~= nil
+    local k = fkey(name)
+    return FR.inv[k] ~= nil or FR.base[k] ~= nil
 end
 local function updateOwnedLabel()
     if not ownedLabel then return end
     local names = {}
-    for _, n in pairs(ownedInv) do table.insert(names, n) end
-    for k, n in pairs(ownedBase) do
-        if not ownedInv[k] then table.insert(names, n) end
+    for _, n in pairs(FR.inv) do table.insert(names, n) end
+    for k, n in pairs(FR.base) do
+        if not FR.inv[k] then table.insert(names, n) end
     end
     table.sort(names)
     ownedLabel.Text = #names == 0 and "Minhas frutas detectadas: nenhuma"
@@ -1663,45 +2270,36 @@ local function isFruitTool(t)
     if string.find(t.Name, "Fruit") ~= nil then return true end
     return string.find(t.Name, "^[%a ]+%-[%a ]+$") ~= nil
 end
-local function toolName(t) return t:GetAttribute("OriginalName") or t.Name end
-local function countFruits()
-    local n = 0
+function toolName(t) return t:GetAttribute("OriginalName") or t.Name end
+function fruitTools()
+    local out = {}
     for _, cont in ipairs({lp.Backpack, lp.Character}) do
         if cont then
             for _, tool in ipairs(cont:GetChildren()) do
-                if isFruitTool(tool) then n = n + 1 end
+                if isFruitTool(tool) then table.insert(out, tool) end
             end
         end
     end
-    return n
+    return out
 end
-local function captureBase()
-    ownedBase = {}
-    for _, cont in ipairs({lp.Backpack, lp.Character}) do
-        if cont then
-            for _, tool in ipairs(cont:GetChildren()) do
-                if isFruitTool(tool) then
-                    local nm = toolName(tool)
-                    ownedBase[key(nm)] = tostring(nm)
-                end
-            end
-        end
+function captureBase()
+    FR.base = {}
+    for _, tool in ipairs(fruitTools()) do
+        local nm = toolName(tool)
+        FR.base[fkey(nm)] = tostring(nm)
     end
 end
-local function refreshOwned()
-    local rem = getRem()
-    if rem then
-        local ok, inv = pcall(function() return rem:InvokeServer("getInventory") end)
-        if ok and type(inv) == "table" then
-            local newInv = {}
-            for _, it in pairs(inv) do
-                if type(it) == "table" and it.Name then
-                    local nm = tostring(it.Name)
-                    if it.Type == "Blox Fruit" or string.find(nm, "%-") then newInv[key(nm)] = nm end
-                end
+function refreshOwned()
+    local inv = invoke("getInventory")
+    if type(inv) == "table" then
+        local newInv = {}
+        for _, it in pairs(inv) do
+            if type(it) == "table" and it.Name then
+                local nm = tostring(it.Name)
+                if it.Type == "Blox Fruit" or string.find(nm, "%-") then newInv[fkey(nm)] = nm end
             end
-            ownedInv = newInv
         end
+        FR.inv = newInv
     end
     updateOwnedLabel()
 end
@@ -1709,410 +2307,621 @@ local function storeAll(setS)
     local rem = getRem()
     if not rem then setS("remote de armazenar nao encontrado") return false end
     local did = false
-    for _, cont in ipairs({lp.Backpack, lp.Character}) do
-        if cont then
-            for _, tool in ipairs(cont:GetChildren()) do
-                if isFruitTool(tool) then
-                    local nm = toolName(tool)
-                    if not isOwned(nm) and (storeTries[tool] or 0) < 3 then
-                        storeTries[tool] = (storeTries[tool] or 0) + 1
-                        setS("armazenando " .. tostring(nm))
-                        pcall(function() return rem:InvokeServer("StoreFruit", nm, tool) end)
-                        did = true
-                        task.wait(0.6)
-                    end
-                end
-            end
+    for _, tool in ipairs(fruitTools()) do
+        local nm = toolName(tool)
+        if not isOwned(nm) and (FR.tries[tool] or 0) < 3 then
+            FR.tries[tool] = (FR.tries[tool] or 0) + 1
+            setS("armazenando " .. tostring(nm))
+            pcall(function() return rem:InvokeServer("StoreFruit", nm, tool) end)
+            did = true
+            task.wait(0.6)
         end
     end
     if did then refreshOwned() end
     return did
 end
-
-local function fruitLoop(myGen)
-    local function alive() return active.fruit and gens.fruit == myGen end
-    local function setS(t) setSt("fruit", t) end
-    local lastRefresh = os.clock()
-    local noneSince = nil
-    while alive() do
-        pcall(function()
-            if os.clock() - lastRefresh > 30 then refreshOwned() lastRefresh = os.clock() end
-            local r = root()
-            if not r then setS("aguardando personagem") return end
-
-            local best, bd
-            for _, f in ipairs(fruitList()) do
-                local u = skippedF[f.obj]
-                if not (u and u > os.clock()) and not isOwned(f.name) then
-                    local d = (f.part.Position - r.Position).Magnitude
-                    if not bd or d < bd then best, bd = f, d end
-                end
-            end
-
-            if not best then
-                if Config.store then storeAll(setS) end
-                noneSince = noneSince or os.clock()
-                local left = math.max(0, Config.hopDelay - (os.clock() - noneSince))
-                if Config.hop then
-                    setS("nenhuma fruta nova aqui, trocando de servidor em " .. math.ceil(left) .. "s")
-                    if left <= 0 then
-                        serverHop(setS)
-                        noneSince = os.clock()
-                    end
-                else
-                    setS("nenhuma fruta nova no mapa")
-                end
-                task.wait(1)
-                return
-            end
-
-            noneSince = nil
-            setS("indo ate " .. best.name .. " (" .. math.floor(bd) .. "m)")
-            if moveTo(CFrame.new(best.part.Position + Vector3.new(0, 3, 0)), Config.fruitSpeed, alive) then
-                setS("pegando " .. best.name)
-                local before = countFruits()
-                local t0 = os.clock()
-                while alive() and best.obj.Parent and os.clock() - t0 < 5 do
-                    local rr = root()
-                    if rr and best.part.Parent then rr.CFrame = best.part.CFrame touch(best.part) end
-                    if countFruits() > before then break end
-                    task.wait(0.3)
-                end
-                task.wait(1)
-            end
-            if best.obj.Parent then skippedF[best.obj] = os.clock() + 60 end
-            if Config.store then storeAll(setS) end
-        end)
-        task.wait(0.4)
+local function bestFruit()
+    local r = root()
+    if not r then return nil end
+    local best, bd
+    for _, f in ipairs(fruitList()) do
+        local u = FR.skipped[f.obj]
+        if not (u and u > os.clock()) and not isOwned(f.name) then
+            local d = (f.part.Position - r.Position).Magnitude
+            if not bd or d < bd then best, bd = f, d end
+        end
     end
-    if gens.fruit == myGen then setS("desligado") end
+    return best, bd
 end
 
---==================== MONTAGEM DAS ABAS ====================
--- Principal
-tInfo.Section("Conta")
-local infoLbl = tInfo.Note("")
-tInfo.Section("Dicas")
-tInfo.Note("O botao redondo O abre e fecha o menu (arraste para mover). No PC, RightShift tambem funciona. Use uma funcao automatica por vez: ao ligar uma, as outras desligam sozinhas.")
-tInfo.Section("Menu")
-tInfo.Button("Esconder menu", toggleMain)
-tInfo.Button("Reentrar no servidor", function()
-    pcall(function() TeleportService:Teleport(game.PlaceId, lp) end)
+local GRIND_KEYS = {"farm", "chest", "bones", "cake", "cakeQuest", "elite", "hopBeard", "bartilo", "citizen", "raceV2", "raceV3"}
+local function anyGrind()
+    for _, k in ipairs(GRIND_KEYS) do
+        if Config[k] then return true end
+    end
+    return false
+end
+regFeature("fruit", 10, function()
+    if bestFruit() then return true end
+    if Config.hop and not anyGrind() then return true end
+    return false
+end, function(alive, setS)
+    if not FR.inited then
+        FR.inited = true
+        setS("detectando suas frutas...")
+        captureBase()
+        refreshOwned()
+    end
+    if os.clock() - FR.lastRefresh > 30 then
+        FR.lastRefresh = os.clock()
+        refreshOwned()
+    end
+    local best, bd = bestFruit()
+    if not best then
+        if Config.store then storeAll(setS) end
+        FR.noneSince = FR.noneSince or os.clock()
+        local left = math.max(0, Config.hopDelay - (os.clock() - FR.noneSince))
+        if Config.hop then
+            setS("nenhuma fruta nova aqui, trocando de servidor em " .. math.ceil(left) .. "s")
+            if left <= 0 then
+                serverHop(setS)
+                FR.noneSince = os.clock()
+            end
+        else
+            setS("nenhuma fruta nova no mapa")
+        end
+        task.wait(1)
+        return
+    end
+    FR.noneSince = nil
+    setS("indo ate " .. best.name .. " (" .. math.floor(bd) .. "m)")
+    if moveTo(CFrame.new(best.part.Position + Vector3.new(0, 3, 0)), Config.fruitSpeed, alive) then
+        setS("pegando " .. best.name)
+        local before = #fruitTools()
+        local t0 = os.clock()
+        while alive() and best.obj.Parent and os.clock() - t0 < 5 do
+            local rr = root()
+            if rr and best.part.Parent then rr.CFrame = best.part.CFrame touch(best.part) end
+            if #fruitTools() > before then break end
+            task.wait(0.3)
+        end
+        task.wait(1)
+    end
+    if best.obj.Parent then FR.skipped[best.obj] = os.clock() + 60 end
+    if Config.store then storeAll(setS) end
 end)
-tInfo.Button("Fechar " .. NAME, destroyAll)
-local exName = "desconhecido"
-pcall(function() if identifyexecutor then exName = tostring(identifyexecutor()) end end)
+
+end
+
+--==================== CHEST (so baus ativos; pega um e vai pro proximo; troca de ilha) ====================
+local chestList
+do
+local chestNames = {Chest1 = "Bau", Chest2 = "Bau de Prata", Chest3 = "Bau de Ouro"}
+local function badFlag(inst)
+    local okA, attrs = pcall(function() return inst:GetAttributes() end)
+    if okA and attrs then
+        for k, val in pairs(attrs) do
+            local lk = string.lower(k)
+            if val == true and (string.find(lk, "disabled", 1, true) or string.find(lk, "collected", 1, true)
+                or string.find(lk, "opened", 1, true) or string.find(lk, "taken", 1, true)) then
+                return true
+            end
+        end
+    end
+    return false
+end
+function chestList()
+    local out, seen = {}, {}
+    local function add(v)
+        if seen[v] or not v.Parent then return end
+        local part = partOf(v)
+        if not part or not part:IsDescendantOf(workspace) then return end
+        seen[v] = true
+        if part.Transparency >= 0.95 or badFlag(v) or badFlag(part) then return end
+        table.insert(out, {obj = v, part = part, name = chestNames[v.Name] or "Bau"})
+    end
+    pcall(function()
+        for _, v in ipairs(CS:GetTagged("_ChestTagged")) do add(v) end
+    end)
+    for _, v in ipairs(workspace:GetChildren()) do
+        if (v:IsA("Model") or v:IsA("BasePart")) and string.find(v.Name, "Chest") then add(v) end
+    end
+    local cm = workspace:FindFirstChild("ChestModels")
+    if cm then
+        for _, v in ipairs(cm:GetChildren()) do add(v) end
+    end
+    return out
+end
+local function touchChest(obj, part)
+    local r = root()
+    if not (r and firetouchinterest) then return end
+    local parts = {part}
+    if obj:IsA("Model") then
+        for _, d in ipairs(obj:GetDescendants()) do
+            if d:IsA("BasePart") and d ~= part then
+                table.insert(parts, d)
+                if #parts >= 6 then break end
+            end
+        end
+    end
+    for _, p in ipairs(parts) do
+        pcall(function()
+            firetouchinterest(r, p, 0)
+            task.wait(0.02)
+            firetouchinterest(r, p, 1)
+        end)
+    end
+end
+local function beli()
+    local ok, v = pcall(function() return lp.Data.Beli.Value end)
+    return ok and tonumber(v) or nil
+end
+local function islandsList()
+    local out = {}
+    local loc = locationsFolder()
+    if not loc then return out end
+    for _, p in ipairs(loc:GetChildren()) do
+        if not isSubName(p.Name) and not string.match(p.Name, "^Island %d") then
+            local okp, pos = pcall(function() return p:GetPivot().Position end)
+            if okp then table.insert(out, {name = p.Name, pos = pos}) end
+        end
+    end
+    return out
+end
+local CH = {done = {}, visited = {}}
+local function posKey(part)
+    local p = part.Position
+    return math.floor(p.X / 10) .. "," .. math.floor(p.Z / 10)
+end
+regFeature("chest", 70, alwaysTrue, function(alive, setS)
+    local r = root()
+    if not r then setS("aguardando personagem") task.wait(1) return end
+    local best, bd, total = nil, nil, 0
+    for _, c in ipairs(chestList()) do
+        total = total + 1
+        local u1, u2 = CH.done[c.obj], CH.done[posKey(c.part)]
+        if not ((u1 and u1 > os.clock()) or (u2 and u2 > os.clock())) then
+            local d = (c.part.Position - r.Position).Magnitude
+            if not bd or d < bd then best, bd = c, d end
+        end
+    end
+    if best then
+        setS("indo ate " .. best.name .. " (" .. math.floor(bd) .. "m)")
+        local ignoreFor = 600
+        if moveTo(CFrame.new(best.part.Position + Vector3.new(0, 2, 0)), Config.chestSpeed, alive) then
+            local b0 = beli()
+            for _ = 1, 3 do
+                local rr = root()
+                if rr and best.part.Parent then
+                    rr.CFrame = best.part.CFrame
+                    touchChest(best.obj, best.part)
+                end
+                task.wait(0.12)
+                if not best.obj.Parent then break end
+            end
+            task.wait(0.15)
+            local b1 = beli()
+            local collected = (not best.obj.Parent) or (b0 ~= nil and b1 ~= nil and b1 > b0)
+            ignoreFor = collected and 120 or 600
+        end
+        CH.done[best.obj] = os.clock() + ignoreFor
+        CH.done[posKey(best.part)] = os.clock() + ignoreFor
+        return
+    end
+    -- nenhum bau aqui: marca a ilha como visitada e vai para a proxima mais perto
+    local isl = islandsList()
+    for _, i in ipairs(isl) do
+        if (i.pos - r.Position).Magnitude < 900 then CH.visited[i.name] = os.clock() + 600 end
+    end
+    local nxt, nd
+    for _, i in ipairs(isl) do
+        local v = CH.visited[i.name]
+        if not (v and v > os.clock()) then
+            local d = (i.pos - r.Position).Magnitude
+            if d > 300 and (not nd or d < nd) then nxt, nd = i, d end
+        end
+    end
+    if not nxt then
+        setS("baus coletados em todas as ilhas, recomecando a volta...")
+        CH.visited = {}
+        task.wait(4)
+        return
+    end
+    setS("sem baus aqui, indo para " .. nxt.name)
+    CH.visited[nxt.name] = os.clock() + 600
+    for _ = 1, 80 do
+        if not alive() then return end
+        local rr = root()
+        if not rr then return end
+        local dir = nxt.pos - rr.Position
+        if dir.Magnitude < 150 then break end
+        if #chestList() > 0 then return end
+        local stepLen = math.min(dir.Magnitude, 500)
+        local tgt = rr.Position + dir.Unit * stepLen
+        moveTo(CFrame.new(tgt.X, nxt.pos.Y + 80, tgt.Z), Config.chestSpeed, alive)
+    end
+    task.wait(1.5)
+end)
+
+end
+
+--==================== QUESTS: BARTILO e CITIZEN ====================
+local BT = {step = 1}
+regFeature("bartilo", 50, alwaysTrue, function(alive, setS)
+    detectSea()
+    if SEA ~= 2 then setS("a quest do Bartilo so existe no Sea 2") task.wait(2) return end
+    if getLevel() < 850 then setS("precisa do level 850 (voce esta no " .. getLevel() .. ")") task.wait(2) return end
+    local prog = invoke("BartiloQuestProgress", "Bartilo")
+    local step = BT.step
+    if type(prog) == "number" and prog >= 0 and prog <= 3 then step = prog + 1 end
+    if step >= 3 then
+        setS("falta a parte do Coliseu (soltar os gladiadores): faca manualmente")
+        uiSet("bartilo", false)
+        return
+    end
+    local mob = (step == 1) and "Swan Pirate" or "Jeremy"
+    if step == 2 and bossStep({"jeremy"}, "Jeremy", alive, setS) then return end
+    if questActive(mob) then
+        if step == 1 then
+            killQuestMobs({name = "BartiloQuest", idx = 1, mob = "Swan Pirate"}, {}, {loc = {"kingdomofrose", "rose"}},
+                getLevel(), alive, setS)
+        else
+            setS("aguardando o Jeremy aparecer...")
+            task.wait(1.5)
+        end
+        return
+    end
+    local npc = approachNPC({"bartilo"}, {"kingdomofrose", "rose"}, alive, setS, "o Bartilo")
+    if not npc or not alive() then return end
+    setS("falando com o Bartilo (parte " .. step .. ")")
+    invoke("StartQuest", "BartiloQuest", step)
+    firePrompts(npc:FindFirstAncestorOfClass("Model"))
+    task.wait(2)
+    if not questActive(mob) and type(prog) ~= "number" then BT.step = math.min(step + 1, 3) end
+end)
+
+regFeature("citizen", 50, alwaysTrue, function(alive, setS)
+    detectSea()
+    if SEA ~= 3 then setS("a Citizen Quest so existe no Sea 3") task.wait(2) return end
+    if getLevel() < 1800 then setS("precisa do level 1800") task.wait(2) return end
+    if bossStep({"captainelephant"}, "Captain Elephant", alive, setS) then return end
+    local npc = approachNPC({"citizen"}, {"floatingturtle", "turtle"}, alive, setS, "o Citizen")
+    if not npc or not alive() then return end
+    setS("pegando a Citizen Quest...")
+    invoke("StartQuest", "CitizenQuest", 1)
+    firePrompts(npc:FindFirstAncestorOfClass("Model"))
+    task.wait(1.5)
+    clickUi({"yes", "sim", "accept", "aceitar"}, true)
+    task.wait(2)
+    setS("quest pega. Aguardando o Captain Elephant...")
+    task.wait(3)
+end)
+
+--==================== RACE ====================
+local raceInfo
+do
+function raceInfo()
+    local race, ver = "?", 1
+    pcall(function() race = tostring(lp.Data.Race.Value) end)
+    pcall(function() if lp.Data.Race:FindFirstChild("Evolved") then ver = 2 end end)
+    return race, ver
+end
+local function flowerCount()
+    local n = 0
+    for _, cont in ipairs({lp.Backpack, lp.Character}) do
+        if cont then
+            for _, t in ipairs(cont:GetChildren()) do
+                if t:IsA("Tool") and string.find(norm(t.Name), "flower", 1, true) then n = n + 1 end
+            end
+        end
+    end
+    return n
+end
+local RV = {accepted = false}
+regFeature("raceV2", 50, alwaysTrue, function(alive, setS)
+    detectSea()
+    local race, ver = raceInfo()
+    if ver >= 2 then setS(race .. " ja esta na V2") uiSet("raceV2", false) return end
+    if SEA ~= 2 then setS("a V2 e feita no Sea 2 (Alchemist)") task.wait(2) return end
+    if getLevel() < 850 then setS("precisa do level 850") task.wait(2) return end
+    local have = flowerCount()
+    if have >= 3 then
+        local npc = approachNPC({"alchemist"}, {"greenzone", "green"}, alive, setS, "o Alchemist")
+        if not npc or not alive() then return end
+        setS("entregando as flores...")
+        invoke("Alchemist", "3")
+        task.wait(2)
+        return
+    end
+    if not RV.accepted then
+        local npc = approachNPC({"alchemist"}, {"greenzone", "green"}, alive, setS, "o Alchemist")
+        if not npc or not alive() then return end
+        setS("pegando a quest do Alchemist...")
+        invoke("Alchemist", "1")
+        invoke("Alchemist", "2")
+        firePrompts(npc:FindFirstAncestorOfClass("Model"))
+        RV.accepted = true
+        task.wait(1.5)
+        return
+    end
+    for i = 1, 3 do
+        local f = workspace:FindFirstChild("Flower" .. i)
+        local part = f and partOf(f)
+        if part then
+            setS("coletando a flor " .. i .. " (" .. have .. "/3)")
+            if moveTo(CFrame.new(part.Position + Vector3.new(0, 3, 0)), Config.tweenSpeed, alive) then
+                touch(part)
+                firePrompts(f)
+                task.wait(1)
+            end
+            return
+        end
+    end
+    setS("aguardando as flores (azul = noite, vermelha = dia) " .. have .. "/3 | farmando zumbis")
+    questStep("raceZombie", {useQuest = true, loc = {"graveyard"}, filter = function(n) return n == "zombie" end}, alive, setS)
+end)
+
+regFeature("raceV3", 50, alwaysTrue, function(alive, setS)
+    local race, ver = raceInfo()
+    if ver < 2 then setS(race .. ": faca a V2 primeiro") task.wait(2) return end
+    local npc = findNPC({"wenlocktoad", "wenlock"})
+    if not npc then
+        setS("V3: nao achei o NPC Wenlocktoad. Va ate ele uma vez (o script grava).")
+        task.wait(3)
+        return
+    end
+    local r = root()
+    if r and (r.Position - npc.Position).Magnitude > 20 then
+        setS("indo ate o Wenlocktoad...")
+        moveTo(CFrame.new(npc.Position + Vector3.new(0, 3, 4)), Config.tweenSpeed, alive)
+        return
+    end
+    invoke("Wenlocktoad", "1")
+    firePrompts(npc:FindFirstAncestorOfClass("Model"))
+    setS("falei com o Wenlocktoad. Conclua o trial da raca " .. race .. " (o jogo guia pela tela).")
+    task.wait(4)
+end)
+
+end
+
+--==================== RAIDS ====================
+local RAID_TYPES
+do
+RAID_TYPES = {"Flame", "Ice", "Quake", "Light", "Dark", "Spider", "Rumble", "Magma", "Buddha", "Sand", "Phoenix", "Dough"}
+local FRUIT_RANK = {rocket = 1, spin = 2, blade = 3, spring = 4, bomb = 5, smoke = 6, spike = 7, flame = 8, falcon = 9,
+    ice = 10, sand = 11, dark = 12, diamond = 13, light = 14, rubber = 15, barrier = 16, ghost = 17, magma = 18}
+local function hasChip() return findTool({"microchip"}) ~= nil end
+local function raidIslands()
+    local out = {}
+    local loc = locationsFolder()
+    if not loc then return out end
+    for _, p in ipairs(loc:GetChildren()) do
+        local n = string.match(p.Name, "^Island (%d)")
+        if n then
+            local ok, pos = pcall(function() return p:GetPivot().Position end)
+            if ok then table.insert(out, {num = tonumber(n), pos = pos}) end
+        end
+    end
+    table.sort(out, function(a, b) return a.num > b.num end)
+    return out
+end
+local function inRaid() return #raidIslands() > 0 end
+local function cheapestFruitTool()
+    local best, br
+    for _, t in ipairs(fruitTools()) do
+        local rank = FRUIT_RANK[fkey(toolName(t))] or 99
+        if not br or rank < br then best, br = t, rank end
+    end
+    if best and br < 99 then return best end
+    return nil
+end
+
+regFeature("buyChip", 45, function() return Config.buyChip and not hasChip() and not inRaid() end, function(alive, setS)
+    detectSea()
+    if SEA == 1 then setS("raids so existem no Sea 2 e Sea 3") task.wait(2) return end
+    local npc = approachNPC({"mysteriousscientist", "scientist"}, {"castleonthesea", "hotandcold", "castle"}, alive, setS, "o Cientista Misterioso")
+    if not npc or not alive() then return end
+    if Config.badFruit then
+        local t = cheapestFruitTool()
+        if t then
+            setS("usando a fruta mais barata (" .. toolName(t) .. ") para o chip")
+            equipTool(t)
+            task.wait(0.6)
+        end
+    end
+    setS("comprando o chip " .. Config.raidType .. "...")
+    invoke("RaidsNpc", "Select", Config.raidType)
+    task.wait(2)
+    if hasChip() then setS("chip comprado!") else setS("nao consegui comprar o chip (sem beli/fruta?)") task.wait(4) end
+end, function() return Config.buyChip end)
+
+local raidBtnCache
+local function findRaidButton()
+    if raidBtnCache and raidBtnCache.Parent then return raidBtnCache end
+    local map = workspace:FindFirstChild("Map")
+    if not map then return nil end
+    for _, d in ipairs(map:GetDescendants()) do
+        if d:IsA("ClickDetector") then
+            local par = d.Parent and d.Parent.Parent and d.Parent.Parent.Parent
+            local pn = string.lower(d:GetFullName())
+            if string.find(pn, "raidsummon", 1, true) then
+                raidBtnCache = d
+                return d
+            end
+        end
+    end
+    return nil
+end
+regFeature("raid", 40, function() return inRaid() or hasChip() end, function(alive, setS)
+    if inRaid() then
+        local list = targetsByNames({""}, {"Enemies"})
+        if #list > 0 then
+            local best, bd = nearestOf(list)
+            setS("Raid: lutando (" .. #list .. " inimigos) | " .. atkInfo())
+            engage(best, alive, farmHover(), false, Config.tweenSpeed, 15)
+        else
+            local isl = raidIslands()[1]
+            if isl then
+                setS("Raid: indo para a ilha " .. isl.num)
+                moveTo(CFrame.new(isl.pos + Vector3.new(0, 40, 0)), Config.tweenSpeed, alive)
+            end
+            task.wait(0.5)
+        end
+        return
+    end
+    local btn = findRaidButton()
+    if not btn then setS("botao de iniciar a raid nao encontrado (va ate o laboratorio de raid)") task.wait(3) return end
+    local part = btn.Parent
+    local pos = part and part:IsA("BasePart") and part.Position
+    if pos then
+        setS("indo ate o botao da raid...")
+        if not moveTo(CFrame.new(pos + Vector3.new(0, 3, 4)), Config.tweenSpeed, alive) then return end
+    end
+    setS("iniciando a raid...")
+    if fireclickdetector then pcall(fireclickdetector, btn) end
+    task.wait(3)
+end)
+
+regFeature("awaken", 45, function() return Config.awaken end, function(alive, setS)
+    setS("tentando despertar as habilidades da fruta...")
+    local a = invoke("Awakener", "Check")
+    task.wait(1)
+    local b = invoke("Awakener", "Awaken")
+    setS("resposta do jogo: " .. tostring(a) .. " / " .. tostring(b) .. " (precisa estar perto do Mysterious Entity)")
+    uiSet("awaken", false)
+end)
+
+end
+
+--==================== TRIALS (ativar V3/V4 automatico), ANTI AFK, WALK ON WATER ====================
 task.spawn(function()
-    while gui.Parent do
-        detectSea()
-        local seaTxt = SEA > 0 and ("Sea " .. SEA) or "Sea ?"
-        infoLbl.Text = seaTxt .. "  |  Level " .. getLevel() .. "  |  Executor: " .. exName
-        infoTop.Text = seaTxt .. "  |  Lv " .. getLevel()
+    while not Stopped and gui.Parent do
+        if Config.actV3 or Config.actV4 then
+            pcall(function()
+                local c = lp.Character
+                local e = c and c:FindFirstChild("RaceEnergy")
+                local on = c and c:FindFirstChild("RaceTransformed")
+                if e and e.Value >= 0.99 and not (on and on.Value) and VIM then
+                    VIM:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
+                    task.wait(0.1)
+                    VIM:SendKeyEvent(false, Enum.KeyCode.Y, false, game)
+                end
+            end)
+        end
+        task.wait(1)
+    end
+end)
+
+keep(lp.Idled:Connect(function()
+    pcall(function()
+        VU:CaptureController()
+        VU:ClickButton2(Vector2.new())
+    end)
+end))
+task.spawn(function()
+    local last = os.clock()
+    while not Stopped and gui.Parent do
+        if Config.afk and os.clock() - last >= Config.afkMin * 60 then
+            last = os.clock()
+            pcall(function()
+                VU:CaptureController()
+                VU:ClickButton1(Vector2.new(2, 2))
+                if VIM then
+                    local x, y = screenCenter()
+                    VIM:SendMouseMoveEvent(x + 3, y + 3, game)
+                end
+            end)
+        end
         task.wait(2)
     end
 end)
 
--- Farm
-tFarm.Section("Level")
-tFarm.Feature("Auto Farm Level", "farm", moverCb("farm", farmLevelLoop), "farm")
-tFarm.Feature("Auto Chest", "chest", moverCb("chest", chestLoop), "chest")
-tFarm.Section("Bones (Haunted Castle)")
-tFarm.Feature("Farm Bones", "bones", moverCb("bones", bonesLoop), "bones")
-tFarm.Section("Katakuri (Cake Land)")
-tFarm.Feature("Auto Farm Katakuri", "cake", moverCb("cake", cakeLoop), "cake")
-tFarm.Toggle("Ignorar Katakuri (so farmar os mobs)", "ignoreKat", function() end)
-tFarm.Feature("Farm Katakuri Quest (pega missao do NPC)", "cakeQuest", moverCb("cakeQuest", cakeQuestLoop), "cakeQuest")
-tFarm.Section("Opcoes do farm")
-tFarm.Toggle("Puxar mobs (Bring Mobs)", "bring", function() end)
-tFarm.Toggle("Fast Attack (CombatFramework)", "fast", function() end)
-tFarm.Toggle("Auto Haki (Buso)", "haki", function() end)
-tFarm.Toggle("Olhar para o mob (pode travar a camera)", "faceMob", function() end)
-tFarm.Note("Por padrao o personagem NAO gira para o mob, entao a camera fica livre durante o farm. Ligue a ultima opcao so se os golpes estiverem errando.")
-
--- Stack Farming
-tStack.Section("Boss Rip Indra")
-tStack.Feature("Auto Elite Hunter", "elite", moverCb("elite", function(g)
-    huntLoop("elite", g, {"diablo", "urban", "deandre"}, "Elite", {idle = eliteIdle, folders = {"Enemies"}})
-end), "elite")
-tStack.Feature("Kill Rip Indra", "killIndra", moverCb("killIndra", function(g)
-    huntLoop("killIndra", g, {"ripindra"}, "Rip Indra", {folders = {"Enemies"}})
-end), "killIndra")
-tStack.Feature("Summon Rip Indra", "sumIndra", moverCb("sumIndra", function(g)
-    runOnce("sumIndra", summonIndra)(g)
-end, true), "sumIndra")
-tStack.Feature("Auto Touch Pad Haki", "pads", moverCb("pads", function(g)
-    runOnce("pads", touchPads)(g)
-end, true), "pads")
-
-tStack.Section("Boss Soul Reaper")
-tStack.Feature("Kill Soul Reaper", "killReaper", moverCb("killReaper", function(g)
-    huntLoop("killReaper", g, {"soulreaper"}, "Soul Reaper", {folders = {"Enemies"}})
-end), "killReaper")
-tStack.Feature("Summon Soul Reaper", "sumReaper", moverCb("sumReaper", function(g)
-    runOnce("sumReaper", summonReaper)(g)
-end, true), "sumReaper")
-
-tStack.Section("Boss Dark Beard (Barba Negra)")
-tStack.Feature("Kill Barba Negra", "killBeard", moverCb("killBeard", function(g)
-    huntLoop("killBeard", g, {"darkbeard"}, "Barba Negra", {folders = {"Enemies"}})
-end), "killBeard")
-tStack.Feature("Summon Barba Negra", "sumBeard", moverCb("sumBeard", function(g)
-    runOnce("sumBeard", summonBeard)(g)
-end, true), "sumBeard")
-tStack.Feature("Hop Server Barba Negra", "hopBeard", moverCb("hopBeard", hopBeardLoop), "hopBeard")
-
-tStack.Section("Sea Events")
-tStack.Note("Ligue um ou mais eventos e fique no mar. Ele espera o monstro aparecer, voa ate ele e ataca de cima, mirando com o mouse (sem travar a camera).")
-local seaStatusLbl = tStack.Note("Status: desligado")
-statusSetters.sea = function(t) seaStatusLbl.Text = "Status: " .. t end
-for _, ev in ipairs(SEA_EVENTS) do
-    seaOn[ev.key] = false
-    tStack.Toggle(ev.label, ev.key, function(v)
-        seaOn[ev.key] = v
-        refreshSea()
-    end, "sea")
-end
-tStack.Slider("Altura sobre o alvo (studs)", 10, 100, "seaHeight")
-tStack.Slider("Velocidade ate o alvo (studs/s)", 20, 400, "seaSpeed")
-tStack.Toggle("Usar skills Z X C V nos eventos", "seaSkills", function() end)
-tStack.Slider("Altura nos bosses (studs)", 5, 40, "bossHeight")
-tStack.Toggle("Usar skills nos bosses", "bossSkills", function() end)
-tStack.Toggle("Travar a camera no alvo (eventos/bosses)", "aimCam", function() end)
-tStack.Note("Dica: o Leviathan nao toma dano de M1 e o corpo so leva dano depois dos segmentos; por isso use as skills ligadas.")
-
--- Fruit + Hop
-tFruit.Section("Auto Find Fruit")
-tFruit.Feature("Auto Find Fruit", "fruit", function(v)
-    active.fruit = v and true or false
-    gens.fruit = (gens.fruit or 0) + 1
-    local g = gens.fruit
-    if v then
-        skippedF, storeTries = {}, {}
-        task.spawn(function()
-            setSt("fruit", "detectando suas frutas...")
-            captureBase()
-            refreshOwned()
-            fruitLoop(g)
-        end)
+local waterPart
+keep(RS.Heartbeat:Connect(function()
+    if not Config.walkWater then
+        if waterPart then
+            waterPart:Destroy()
+            waterPart = nil
+        end
+        return
+    end
+    local r = root()
+    if not r then return end
+    if not waterPart then
+        waterPart = new("Part", {
+            Size = Vector3.new(26, 2, 26), Transparency = 1, Anchored = true, CanCollide = true, CanQuery = false,
+            CanTouch = false, Name = "OrionWater",
+        }, workspace)
+    end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {lp.Character, waterPart}
+    params.IgnoreWater = false
+    local res = workspace:Raycast(r.Position, Vector3.new(0, -16, 0), params)
+    local isWater = res and (res.Material == Enum.Material.Water or string.find(string.lower(res.Instance.Name), "water", 1, true))
+    if isWater then
+        waterPart.CFrame = CFrame.new(res.Position.X, res.Position.Y - 1, res.Position.Z)
     else
-        setSt("fruit", "desligado")
+        waterPart.CFrame = CFrame.new(0, -10000, 0)
     end
-end, "fruit")
-tFruit.Toggle("Server Hop (troca de servidor sem fruta)", "hop", function() end)
-tFruit.Toggle("Armazenar fruta automaticamente", "store", function() end)
-tFruit.Slider("Esperar antes de trocar de servidor (s)", 3, 30, "hopDelay")
-tFruit.Slider("Velocidade ate a fruta (studs/s)", 20, 400, "fruitSpeed")
-ownedLabel = tFruit.Note("Minhas frutas detectadas: (ainda nao detectado)")
-tFruit.Button("Trocar de servidor agora", function()
-    serverHop(function(t) setSt("fruit", t) end)
-end)
-tFruit.Button("Atualizar minhas frutas", function() captureBase() refreshOwned() end)
-tFruit.Note("Dica: salve este script como OrionHub.lua na pasta workspace do executor. Assim ele roda sozinho em cada servidor novo e as funcoes ligadas continuam (as opcoes ficam salvas).")
+end))
 
--- Teleport
-local tpStatus = tTp.Note("Escolha uma ilha na lista (ou busque pelo nome, ex: tiki) e toque em Teleportar.")
-local selectedIsland, allIslands, islandBtns = nil, {}, {}
-
-local searchBox = new("TextBox", {
-    Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.card, Text = "", PlaceholderText = "Buscar ilha (ex: tiki)",
-    TextColor3 = C.txt, PlaceholderColor3 = C.mut, Font = Enum.Font.Gotham, TextSize = 13, ClearTextOnFocus = false,
-}, tTp.page)
-round(searchBox, 10)
-new("UIPadding", {PaddingLeft = UDim.new(0, 12)}, searchBox)
-
-local listFrame = new("ScrollingFrame", {
-    Size = UDim2.new(1, 0, 0, 170), BackgroundColor3 = C.card, BorderSizePixel = 0,
-    ScrollBarThickness = 3, ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(),
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-}, tTp.page)
-round(listFrame, 10)
-new("UIListLayout", {Padding = UDim.new(0, 4)}, listFrame)
-new("UIPadding", {
-    PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6),
-    PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6),
-}, listFrame)
-
-local function renderIslands()
-    for _, b in ipairs(islandBtns) do b:Destroy() end
-    islandBtns = {}
-    local q = string.lower(searchBox.Text or "")
-    for _, name in ipairs(allIslands) do
-        if q == "" or string.find(string.lower(name), q, 1, true) then
-            local b = new("TextButton", {
-                Size = UDim2.new(1, -6, 0, 28),
-                BackgroundColor3 = (name == selectedIsland) and C.acc or C.off,
-                Text = name, TextColor3 = C.txt, Font = Enum.Font.Gotham, TextSize = 13, AutoButtonColor = false,
-            }, listFrame)
-            round(b, 6)
-            b.MouseButton1Click:Connect(function()
-                selectedIsland = name
-                tpStatus.Text = "Selecionada: " .. name
-                renderIslands()
-            end)
-            table.insert(islandBtns, b)
-        end
+--==================== FPS BOOST ====================
+local applyFps
+do
+local fpsHooked = false
+local function killFx(d)
+    if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+        pcall(function() d.Enabled = false end)
     end
 end
-
-local function loadIslands()
-    detectSea()
-    allIslands = {}
-    local seen = {}
-    local loc = locationsFolder()
-    if loc then
-        for _, p in ipairs(loc:GetChildren()) do
-            if not seen[p.Name] then
-                seen[p.Name] = true
-                table.insert(allIslands, p.Name)
-            end
-        end
-    end
-    table.sort(allIslands)
-    renderIslands()
-    if #allIslands == 0 then
-        tpStatus.Text = "Nao encontrei a lista de ilhas deste mar."
-    else
-        tpStatus.Text = (SEA > 0 and ("Sea " .. SEA) or "Mar") .. ": " .. #allIslands .. " ilhas. Escolha uma."
-    end
-end
-searchBox:GetPropertyChangedSignal("Text"):Connect(renderIslands)
-loadIslands()
-
-local function islandPos(name)
-    local loc = locationsFolder()
-    local obj = loc and loc:FindFirstChild(name)
-    if not obj then return nil end
-    local ok, pos = pcall(function() return obj:GetPivot().Position end)
-    if ok then return pos end
-    return nil
-end
-
-local function findIslandName(kw)
-    for _, name in ipairs(allIslands) do
-        if string.find(string.lower(name), kw, 1, true) then return name end
-    end
-    return nil
-end
-
-local function findSubmarineNPC()
-    local function scan(folder)
-        for _, n in ipairs(folder:GetChildren()) do
-            if n:IsA("Model") and string.find(string.lower(n.Name), "submarine", 1, true) then
-                local part = npcPart(n)
-                if part then return part end
-            end
-        end
-        return nil
-    end
-    local npcs = workspace:FindFirstChild("NPCs")
-    local p = npcs and scan(npcs)
-    if p then return p end
-    return scan(workspace)
-end
-
--- Submerged Island: rota Tiki Outpost -> Submarine Worker -> pedir a viagem
-local function goSubmerged(g)
-    local function alive() return gens.tp == g end
-    local tiki = findIslandName("tiki")
-    local tpos = tiki and islandPos(tiki)
-    if not tpos then
-        tpStatus.Text = "Nao achei o Tiki Outpost na lista. Va ate o Sea 3 e atualize a lista."
-        return
-    end
-    tpStatus.Text = "Indo para o Tiki Outpost..."
-    if not moveTo(CFrame.new(tpos + Vector3.new(0, 70, 0)), Config.tpSpeed, alive) then
-        tpStatus.Text = "Teleporte cancelado"
-        return
-    end
-    local npc
-    for i = 1, 15 do
-        if not alive() then return end
-        npc = findSubmarineNPC()
-        if npc then break end
-        tpStatus.Text = "procurando o Submarine Worker no Tiki Outpost (" .. i .. "/15)..."
-        task.wait(1)
-    end
-    if not npc then
-        tpStatus.Text = "Nao achei o Submarine Worker. Chegue mais perto dele no Tiki e tente de novo."
-        return
-    end
-    tpStatus.Text = "indo ate o Submarine Worker..."
-    if not moveTo(CFrame.new(npc.Position + Vector3.new(0, 3, 4)), Config.tpSpeed, alive) then return end
-    task.wait(0.8)
-    tpStatus.Text = "falando com o Submarine Worker..."
-    local used = false
+function applyFps()
+    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
     pcall(function()
-        local m = RepS:FindFirstChild("Modules")
-        local net = m and m:FindFirstChild("Net")
-        local rf = net and net:FindFirstChild("RF/SubmarineWorkerSpeak")
-        if rf then
-            used = true
-            rf:InvokeServer("TravelToSubmergedIsland")
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        for _, e in ipairs(Lighting:GetChildren()) do
+            if e:IsA("PostEffect") or e:IsA("Atmosphere") then e:Destroy() end
+        end
+        local t = workspace:FindFirstChildOfClass("Terrain")
+        if t then
+            t.WaterWaveSize = 0
+            t.WaterWaveSpeed = 0
+            t.WaterReflectance = 0
         end
     end)
-    if not used then
-        local rem = getRem()
-        if rem then
-            used = true
-            pcall(function() rem:InvokeServer("SubmarineWorkerSpeak", "TravelToSubmergedIsland") end)
-        end
+    if not fpsHooked then
+        fpsHooked = true
+        keep(workspace.DescendantAdded:Connect(function(d)
+            if Config.fpsBoost then killFx(d) end
+        end))
     end
-    if used then
-        tpStatus.Text = "Pedi a viagem para a Submerged Island. Se nao foi, fale com o NPC manualmente."
-    else
-        tpStatus.Text = "Remote do NPC nao encontrado. Fale com ele manualmente."
-    end
-end
-
-tTp.Button("Teleportar para a ilha selecionada", function()
-    if not selectedIsland then tpStatus.Text = "Escolha uma ilha primeiro." return end
-    stopMovers()
-    if string.find(string.lower(selectedIsland), "submerged", 1, true) then
-        gens.tp = (gens.tp or 0) + 1
-        local g = gens.tp
-        active.tp = true
-        task.spawn(function()
-            local ok, err = pcall(goSubmerged, g)
-            if gens.tp == g then active.tp = false end
-            if not ok then tpStatus.Text = "erro: " .. tostring(err) end
-        end)
-        return
-    end
-    local pos = islandPos(selectedIsland)
-    if not pos then tpStatus.Text = "Nao consegui ler a posicao dessa ilha." return end
-    gens.tp = (gens.tp or 0) + 1
-    local g = gens.tp
-    active.tp = true
-    local name = selectedIsland
-    tpStatus.Text = "Indo para " .. name .. "..."
     task.spawn(function()
-        local done = moveTo(CFrame.new(pos + Vector3.new(0, 70, 0)), Config.tpSpeed, function() return gens.tp == g end)
-        if gens.tp == g then active.tp = false end
-        tpStatus.Text = done and ("Chegou em " .. name) or "Teleporte cancelado"
+        local n = 0
+        for _, d in ipairs(workspace:GetDescendants()) do
+            n = n + 1
+            if n % 1200 == 0 then task.wait() end
+            killFx(d)
+            if Config.fpsMax then
+                if d:IsA("Decal") or d:IsA("Texture") then
+                    pcall(function() d.Transparency = 1 end)
+                elseif d:IsA("BasePart") and not (lp.Character and d:IsDescendantOf(lp.Character)) then
+                    pcall(function()
+                        d.Material = Enum.Material.SmoothPlastic
+                        d.Reflectance = 0
+                        d.CastShadow = false
+                    end)
+                end
+            end
+        end
     end)
-end, true)
-tTp.Button("Parar teleporte", function()
-    gens.tp = (gens.tp or 0) + 1
-    active.tp = false
-    tpStatus.Text = "Teleporte parado."
-end)
-tTp.Button("Atualizar lista de ilhas", loadIslands)
-tTp.Slider("Velocidade do teleporte (studs/s)", 50, 500, "tpSpeed")
-
-local function travel(arg, label)
-    local rem = getRem()
-    if not rem then tpStatus.Text = "Remote de viagem nao encontrado." return end
-    tpStatus.Text = "Viajando para " .. label .. "..."
-    pcall(function() rem:InvokeServer(arg) end)
 end
-tTp.Section("Viajar entre mares")
-tTp.Button("Viajar para o Sea 1", function() travel("TravelMain", "Sea 1") end)
-tTp.Button("Viajar para o Sea 2", function() travel("TravelDressrosa", "Sea 2") end)
-tTp.Button("Viajar para o Sea 3", function() travel("TravelZou", "Sea 3") end)
-tTp.Note("Voce chega 70 studs acima da ilha e cai ate o chao. A lista mostra as ilhas do mar em que voce esta.")
 
--- ESP
-local esp = {}
+end
+
+--==================== ESP ====================
+local clearESP
+do
 local tags = {}
 local function removeTag(k)
     local t = tags[k]
@@ -2127,8 +2936,7 @@ local function setTag(k, adornee, hlTarget, color, label)
     if not t or not t.bb.Parent then
         removeTag(k)
         local bb = new("BillboardGui", {
-            Size = UDim2.fromOffset(170, 38), AlwaysOnTop = true,
-            StudsOffset = Vector3.new(0, 3, 0), Adornee = adornee,
+            Size = UDim2.fromOffset(170, 38), AlwaysOnTop = true, StudsOffset = Vector3.new(0, 3, 0), Adornee = adornee,
         }, gui)
         local lbl = new("TextLabel", {
             Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, TextColor3 = color,
@@ -2137,8 +2945,7 @@ local function setTag(k, adornee, hlTarget, color, label)
         local hl = nil
         if Config.espOutline and hlTarget then
             hl = new("Highlight", {
-                Adornee = hlTarget, FillTransparency = 1, OutlineColor = color,
-                DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+                Adornee = hlTarget, FillTransparency = 1, OutlineColor = color, DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
             }, gui)
         end
         t = {bb = bb, lbl = lbl, hl = hl}
@@ -2146,6 +2953,19 @@ local function setTag(k, adornee, hlTarget, color, label)
     end
     t.lbl.Text = label
     t.bb.Adornee = adornee
+end
+local function berryList()
+    local out = {}
+    pcall(function()
+        for _, v in ipairs(CS:GetTagged("BerryBush")) do
+            local part = partOf(v)
+            if part then
+                table.insert(out, {obj = v, part = part,
+                    name = tostring(v:GetAttribute("BerryName") or v:GetAttribute("Berry") or v.Name)})
+            end
+        end
+    end)
+    return out
 end
 local function refreshESP()
     local seen = {}
@@ -2177,38 +2997,267 @@ local function refreshESP()
             setTag(c.obj, c.part, nil, Color3.fromRGB(80, 220, 255), c.name .. dist(c.part))
         end
     end
+    if Config.espBerries then
+        for _, b in ipairs(berryList()) do
+            seen[b.obj] = true
+            setTag(b.obj, b.part, nil, Color3.fromRGB(255, 120, 200), "Berry: " .. b.name .. dist(b.part))
+        end
+    end
+    if Config.espIsland then
+        local loc = locationsFolder()
+        if loc then
+            for _, p in ipairs(loc:GetChildren()) do
+                local part = partOf(p)
+                if part then
+                    seen[p] = true
+                    setTag(p, part, nil, Color3.fromRGB(150, 255, 170), p.Name .. dist(part))
+                end
+            end
+        end
+    end
     for k in pairs(tags) do
         if not seen[k] then removeTag(k) end
     end
 end
-local function clearESP() for k in pairs(tags) do removeTag(k) end end
-
-tESP.Note("Marca jogadores, frutas e baus soltos no mapa.")
-tESP.Toggle("ESP Jogadores", "espPlayers", function() refreshESP() end)
-tESP.Toggle("ESP Frutas", "espFruits", function() refreshESP() end)
-tESP.Toggle("ESP Baus", "espChests", function() refreshESP() end)
-tESP.Toggle("Mostrar distancia", "espDist", function() end)
-tESP.Toggle("Contornos (jogadores e frutas)", "espOutline", function()
-    clearESP()
-    refreshESP()
-end)
+function clearESP() for k in pairs(tags) do removeTag(k) end end
 local accT = 0
 keep(RS.Heartbeat:Connect(function(dt)
     accT = accT + dt
-    if accT < 0.3 then return end
+    if accT < 0.4 then return end
     accT = 0
-    if Config.espPlayers or Config.espFruits or Config.espChests then pcall(refreshESP) end
+    if Config.espPlayers or Config.espFruits or Config.espChests or Config.espBerries or Config.espIsland then
+        pcall(refreshESP)
+    else
+        if next(tags) then clearESP() end
+    end
 end))
+end
 
--- Jogador
-tPlayer.Toggle("Velocidade ligada", "spdOn", function(v)
+
+--==================== CALIBRAR FAST ATTACK ====================
+local function calibrate(report)
+    local r = root()
+    if not r then report("sem personagem") return end
+    local best, bd
+    for _, e in ipairs(enemiesNear(250)) do
+        local p = e:FindFirstChild("HumanoidRootPart")
+        local h = e:FindFirstChildOfClass("Humanoid")
+        if p and h then
+            local d = (p.Position - r.Position).Magnitude
+            if not bd or d < bd then best, bd = {mdl = e, part = p, hum = h}, d end
+        end
+    end
+    if not best then report("nenhum mob ate 250 studs: chegue perto de um e tente de novo") return end
+    TpBusy = true
+    equipWeapon()
+    local results, bestIdx, bestDmg = {}, 1, -1
+    for i, name in ipairs(METHODS) do
+        local hp0 = best.hum.Health
+        local t0 = os.clock()
+        while os.clock() - t0 < 2 and best.mdl.Parent and best.hum.Health > 0 do
+            placeAt(hoverPos(best.part.Position, 5), best.part.Position)
+            if name == "Moon" then atkMoon() else runMethod(name) end
+            task.wait(0.06)
+        end
+        local dmg = hp0 - math.max(best.hum.Health, 0)
+        results[#results + 1] = name .. "=" .. math.floor(dmg)
+        if dmg > bestDmg then bestDmg, bestIdx = dmg, i end
+        if not best.mdl.Parent or best.hum.Health <= 0 then break end
+    end
+    TpBusy = false
+    if bestDmg > 0 then
+        Atk.m = bestIdx
+        Atk.near = false
+        report("dano por metodo: " .. table.concat(results, " | ") .. " -> usando " .. METHODS[bestIdx])
+    else
+        report("nenhum metodo causou dano (" .. table.concat(results, " | ") .. "). Tente com a arma equipada e perto do mob.")
+    end
+end
+
+--==================== ABAS ====================
+-- Main
+tMain.Section("Auto Farm")
+tMain.Feature("Auto Farm Level", "farm", "grind")
+tMain.Feature("Auto Chest", "chest", "grind")
+tMain.Section("Bones (Haunted Castle)")
+tMain.Feature("Auto Bones", "bones", "grind")
+tMain.Section("Katakuri (Cake Land)")
+tMain.Feature("Auto Farm Katakuri", "cake", "grind")
+tMain.Toggle("Ignorar Katakuri", "So farma os mobs, sem atacar o boss.", "ignoreKat")
+tMain.Feature("Katakuri Quest", "cakeQuest", "grind")
+tMain.Section("Farm Settings")
+tMain.Dropdown("Tween Option", "Metodo de movimento (Lerp e o mais suave).", {"Lerp", "Tween"}, "tweenMode")
+tMain.Slider("Tweening Speed", "Velocidade do tween em studs/s.", 20, 400, "tweenSpeed")
+tMain.Slider("Farm Distance", "Altura/distancia ate o mob.", 3, 30, "farmDist")
+tMain.Slider("Bring Radius", "Raio para puxar os mobs.", 20, 400, "bringRadius")
+tMain.Slider("Bring Count", "Quantos mobs puxar de uma vez.", 1, 20, "bringCount")
+tMain.Dropdown("Pos Method", "Onde ficar em relacao ao mob.", {"Above", "Behind", "Below"}, "posMethod")
+tMain.Dropdown("Select Weapon", "Arma usada nos farms.", {"Melee", "Sword", "Gun", "Blox Fruit"}, "weapon")
+tMain.Toggle("Bring Mobs", "Junta os mobs num ponto para matar todos juntos.", "bring")
+tMain.Toggle("Fast Attack", "Ataque rapido (troca de metodo sozinho se nao bater).", "fast")
+tMain.Toggle("Auto Haki", "Liga o Buso Haki automaticamente.", "haki")
+tMain.Toggle("Olhar para o mob", "Pode travar a camera.", "faceMob")
+
+-- Multi Farm
+tMulti.Note("Multi Farm: combine alvos e atividades. Funcoes de prioridade (fruta, bosses) interrompem o farm e ele volta sozinho.")
+tMulti.Section("Elite Hunter")
+tMulti.Feature("Auto Elite Hunter", "elite", "grind")
+tMulti.Section("Boss Rip Indra")
+tMulti.Feature("Kill Rip Indra", "killIndra")
+tMulti.Feature("Summon Rip Indra", "sumIndra")
+tMulti.Feature("Auto Touch Pad Haki", "pads")
+tMulti.Section("Boss Soul Reaper")
+tMulti.Feature("Kill Soul Reaper", "killReaper")
+tMulti.Feature("Summon Soul Reaper", "sumReaper")
+tMulti.Section("Darkbeard")
+tMulti.Feature("Kill Darkbeard", "killBeard")
+tMulti.Feature("Summon Darkbeard", "sumBeard")
+tMulti.Feature("Hop Server Darkbeard", "hopBeard", "grind")
+tMulti.Slider("Altura nos bosses", "Distancia do boss.", 4, 40, "bossHeight")
+tMulti.Toggle("Skills nos bosses", "Usa Z X C V.", "bossSkills")
+
+-- Quests
+tQuests.Section("Sea 2")
+tQuests.Feature("Auto Bartilo Quest", "bartilo", "grind")
+tQuests.Section("Sea 3")
+tQuests.Feature("Auto Citizen Quest", "citizen", "grind")
+tQuests.Note("Bartilo: Swan Pirates e Jeremy sao automaticos; a parte do Coliseu e manual. Citizen: pega a quest e mata o Captain Elephant.")
+
+-- Race
+local raceLbl = tRace.Note("Detectando sua raca...")
+tRace.Section("Evolucao")
+tRace.Feature("Auto Race V2 (Alchemist)", "raceV2", "grind")
+tRace.Feature("Auto Race V3", "raceV3", "grind")
+tRace.Note("V2: aceita a quest do Alchemist, junta as 3 flores e entrega. V3: vai ate o NPC e pede a quest; o trial da raca voce conclui seguindo o jogo.")
+task.spawn(function()
+    while not Stopped and gui.Parent do
+        local race, ver = raceInfo()
+        raceLbl.Text = "Sua raca: " .. race .. "  |  Versao: V" .. ver .. (ver >= 2 and " (evoluida)" or "")
+        task.wait(3)
+    end
+end)
+
+-- Raids
+tRaids.Section("Chip")
+tRaids.Dropdown("Select Raid", "Qual raid voce quer fazer.", RAID_TYPES, "raidType")
+tRaids.Feature("Auto Buy Chip", "buyChip")
+tRaids.Toggle("Pagar chip com fruta ruim", "Usa a fruta mais barata da mochila (nunca as boas) em vez de beli.", "badFruit")
+tRaids.Section("Raid")
+tRaids.Feature("Auto Farm Raid", "raid")
+tRaids.Feature("Auto Awaken Fruit", "awaken")
+tRaids.Note("Auto Raid inicia a raid sozinho quando voce tem o chip e, dentro dela, voa ate os inimigos com fast attack.")
+
+-- Trials
+tTrials.Toggle("Auto Ativar V3", "Aperta Y sozinho quando a energia da raca enche.", "actV3")
+tTrials.Toggle("Auto Ativar V4", "Mesmo para a V4.", "actV4")
+tTrials.Note("Ativa a transformacao da raca automaticamente durante o farm.")
+
+-- Sea Event
+tSea.Note("Ligue um ou mais eventos e fique no mar. Ele espera o monstro aparecer, voa ate ele e ataca de cima.")
+local seaStatus = tSea.Note("Status: desligado")
+statusSetters.sea = function(t) seaStatus.Text = "Status: " .. t end
+tSea.Section("Eventos")
+for _, ev in ipairs(SEA_EVENTS) do tSea.Toggle(ev.label, "Ataca quando aparecer.", ev.key) end
+tSea.Section("Ajustes")
+tSea.Slider("Altura sobre o alvo", "Studs acima do monstro.", 10, 100, "seaHeight")
+tSea.Slider("Velocidade ate o alvo", "studs/s.", 20, 400, "seaSpeed")
+tSea.Toggle("Skills nos eventos", "Usa Z X C V (necessario no Leviathan).", "seaSkills")
+tSea.Toggle("Travar camera no alvo", "Opcional.", "aimCam")
+
+-- Fruits
+tFruit.Section("Auto Find Fruit")
+tFruit.Feature("Auto Find Fruit", "fruit")
+tFruit.Toggle("Server Hop", "Troca de servidor quando nao tem fruta (so se nenhum farm estiver ligado).", "hop")
+tFruit.Toggle("Armazenar fruta", "Guarda a fruta no inventario ao pegar.", "store")
+tFruit.Slider("Esperar antes do hop (s)", "Tempo sem fruta antes de trocar.", 3, 30, "hopDelay")
+tFruit.Slider("Velocidade ate a fruta", "studs/s.", 20, 400, "fruitSpeed")
+ownedLabel = tFruit.Note("Minhas frutas detectadas: (ainda nao detectado)")
+tFruit.Button("Trocar de servidor", "Vai para outro servidor agora.", "Hop", function()
+    serverHop(function(t) setSt("fruit", t) end)
+end)
+tFruit.Button("Atualizar minhas frutas", "Le a mochila e o inventario.", "Atualizar", function() captureBase() refreshOwned() end)
+
+-- Location
+local tpStatus = tLoc.Note("Escolha uma ilha e ligue Teleport Island.")
+local islandDD
+local function loadIslands()
+    detectSea()
+    local names = {}
+    local loc = locationsFolder()
+    if loc then
+        for _, p in ipairs(loc:GetChildren()) do
+            if not string.match(p.Name, "^Island %d") then table.insert(names, p.Name) end
+        end
+    end
+    table.sort(names)
+    islandDD.setOptions(names)
+    tpStatus.Text = #names == 0 and "Nao encontrei a lista de ilhas deste mar." or ((SEA > 0 and ("Sea " .. SEA) or "Mar") .. ": " .. #names .. " ilhas.")
+end
+tLoc.Section("Island Teleport")
+tLoc.Toggle("ESP Island", "Mostra o nome e a distancia das ilhas.", "espIsland")
+islandDD = tLoc.Dropdown("Select Island", "Seleciona a ilha para teleportar.", {}, "island", nil, 6)
+loadIslands()
+local tpGen = 0
+tLoc.Toggle("Teleport Island", "Teleporta ate a ilha selecionada (Submerged Island entra pelo submarino).", "tpGo", function(on)
+    tpGen = tpGen + 1
+    local g = tpGen
+    if not on then TpBusy = false return end
+    task.spawn(function()
+        local function alive() return tpGen == g and not Stopped end
+        local name = Config.island
+        TpBusy = true
+        if name == "" then
+            tpStatus.Text = "Escolha uma ilha primeiro."
+        elseif isSubName(name) then
+            tpStatus.Text = "Indo para a Submerged Island pelo Submarine Worker..."
+            local ok = enterSubmerged(alive, function(t) tpStatus.Text = t end)
+            if ok then tpStatus.Text = "Voce esta na Submerged Island." end
+        else
+            local loc = locationsFolder()
+            local obj = loc and loc:FindFirstChild(name)
+            local okp, pos = pcall(function() return obj:GetPivot().Position end)
+            if okp then
+                tpStatus.Text = "Indo para " .. name .. "..."
+                local done = moveTo(CFrame.new(pos + Vector3.new(0, 70, 0)), Config.tpSpeed, alive)
+                tpStatus.Text = done and ("Chegou em " .. name) or "Teleporte cancelado"
+            else
+                tpStatus.Text = "Nao consegui ler a posicao dessa ilha."
+            end
+        end
+        TpBusy = false
+        if tpGen == g then uiSet("tpGo", false) end
+    end)
+end)
+tLoc.Slider("Velocidade do teleporte", "studs/s.", 50, 500, "tpSpeed")
+tLoc.Button("Atualizar ilhas", "Recarrega a lista do mar atual.", "Atualizar", loadIslands)
+tLoc.Section("Viajar entre mares")
+local function travel(arg, label)
+    tpStatus.Text = "Viajando para " .. label .. "..."
+    invoke(arg)
+end
+tLoc.Button("Sea 1", "Viaja para o primeiro mar.", "Ir", function() travel("TravelMain", "Sea 1") end)
+tLoc.Button("Sea 2", "Viaja para o segundo mar.", "Ir", function() travel("TravelDressrosa", "Sea 2") end)
+tLoc.Button("Sea 3", "Viaja para o terceiro mar.", "Ir", function() travel("TravelZou", "Sea 3") end)
+
+-- ESP
+tESP.Toggle("ESP Players", "Marca os jogadores.", "espPlayers")
+tESP.Toggle("ESP Fruits", "Marca frutas no chao.", "espFruits")
+tESP.Toggle("ESP Chests", "Marca baus ativos.", "espChests")
+tESP.Toggle("ESP Berries", "Marca os arbustos de berries.", "espBerries")
+tESP.Toggle("Mostrar distancia", "Metros ate o alvo.", "espDist")
+tESP.Toggle("Contornos", "Contorno colorido em jogadores e frutas.", "espOutline", function() clearESP() end)
+
+-- Player
+tPlayer.Toggle("Speed", "Aumenta a velocidade de corrida.", "spdOn", function(v)
     if not v then
         local h = hum()
         if h then h.WalkSpeed = 16 end
     end
 end)
-tPlayer.Slider("Velocidade", 16, 200, "speedVal")
-tPlayer.Toggle("Modo CFrame (se o jogo resetar)", "cfm", function() end)
+tPlayer.Slider("Velocidade", "Valor do speed.", 16, 200, "speedVal")
+tPlayer.Toggle("Modo CFrame", "Use se o jogo resetar a velocidade.", "cfm")
+tPlayer.Toggle("Pulo infinito", "Pula varias vezes no ar.", "infj")
+tPlayer.Toggle("Walk on Water", "Anda sobre a agua.", "walkWater")
 keep(RS.Heartbeat:Connect(function(dt)
     if not Config.spdOn then return end
     local h = hum()
@@ -2222,7 +3271,6 @@ keep(RS.Heartbeat:Connect(function(dt)
         h.WalkSpeed = Config.speedVal
     end
 end))
-tPlayer.Toggle("Pulo infinito", "infj", function() end)
 keep(UIS.JumpRequest:Connect(function()
     if Config.infj then
         local h = hum()
@@ -2230,16 +3278,46 @@ keep(UIS.JumpRequest:Connect(function()
     end
 end))
 
--- Configuracoes
-tCfg.Section("Farm")
-tCfg.Slider("Velocidade do tween (studs/s)", 20, 400, "tweenSpeed")
-tCfg.Slider("Altura acima dos mobs (studs)", 3, 25, "height")
-tCfg.Slider("Velocidade do Auto Chest (studs/s)", 20, 400, "chestSpeed")
-tCfg.Choice("Arma do Auto Farm", {"Melee", "Sword", "Gun", "Blox Fruit"}, "weapon")
-tCfg.Toggle("Noclip nas funcoes automaticas", "noclip", function() end)
-tCfg.Note("Velocidade menor = mais seguro. Se o personagem for puxado de volta ou o jogo kickar, diminua as velocidades.")
+-- Anti AFK
+tAfk.Toggle("Anti AFK", "Clica na tela de tempos em tempos para o jogo nao te kickar.", "afk")
+tAfk.Slider("Intervalo (minutos)", "A cada quantos minutos clicar.", 1, 10, "afkMin")
+tAfk.Note("Alem do clique, o Anti AFK do Roblox (Idled) fica sempre ativo.")
 
+-- Diversos
+tMisc.Toggle("FPS Boost", "Tira sombras, efeitos e particulas para deixar o Roblox liso.", "fpsBoost", function(on)
+    if on then applyFps() end
+end)
+tMisc.Toggle("FPS Boost maximo", "Tambem simplifica materiais e texturas (nao desfaz sem reentrar).", "fpsMax")
+tMisc.Button("Aplicar FPS Boost agora", "Executa a limpeza agora.", "Aplicar", applyFps)
+
+-- Settings
+tCfg.Section("Fast Attack")
+tCfg.Dropdown("Metodo", "Auto troca de metodo sozinho se nao causar dano.", {"Auto", "Moon", "All", "CombatFramework", "CombatFramework 2", "Remote", "Click"}, "atkMethod")
+tCfg.Slider("Intervalo do ataque (s)", "Menor = mais rapido.", 0.02, 0.2, "atkDelay")
+tCfg.Slider("Alcance do Moon (studs)", "Mobs dentro desse raio levam o golpe.", 20, 120, "moonRange")
+tCfg.Slider("Max. de mobs por golpe", "Quantos mobs o Moon acerta de uma vez.", 1, 20, "moonTargets")
+local calLbl = tCfg.Button("Testar Fast Attack", "Chegue perto de um mob e teste: ele escolhe o metodo que causa dano.", "Testar", function()
+    task.spawn(function() calibrate(function(t) calLbl.Text = t end) end)
+end)
+tCfg.Section("Geral")
+tCfg.Toggle("Noclip nas funcoes automaticas", "Atravessa paredes durante o farm.", "noclip")
+tCfg.Slider("Velocidade do Auto Chest", "studs/s.", 20, 400, "chestSpeed")
+tCfg.Button("Menu", "Esconde o menu (RightShift tambem).", "Esconder", toggleMain)
+tCfg.Button("Fechar", "Fecha o Orion Hub.", "Fechar", destroyAll)
+
+--==================== INICIO ====================
+local exName = "?"
+pcall(function() if identifyexecutor then exName = tostring(identifyexecutor()) end end)
+task.spawn(function()
+    while not Stopped and gui.Parent do
+        detectSea()
+        infoTop.Text = "Blox Fruit · " .. VERSION .. " · " .. (SEA > 0 and ("Sea " .. SEA) or "Sea ?") .. " · Lv " .. getLevel() .. " · " .. exName
+        task.wait(2)
+    end
+end)
+if Config.fpsBoost then applyFps() end
 selectTab(tabs[1])
+startScheduler()
 print("[" .. NAME .. "] carregado")
 pcall(function()
     StarterGui:SetCore("SendNotification", {Title = NAME, Text = "Carregado! Use o botao redondo para abrir/fechar.", Duration = 5})
